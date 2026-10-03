@@ -56,3 +56,22 @@ test('custom game labels persist while generated title and executable metadata r
   const target = changed.nodes.find((n) => n.id === game.id);
   assert.equal(target.data.label, '我的独立节点名称'); assert.equal(target.data.title, 'Generated title'); assert.equal(target.data.versionId, saved.activeVersionId); assert.equal(target.data.status, 'succeeded');
 });
+
+test('multipart uploaded Chinese and accented filenames round-trip through safe display normalization', async (t) => {
+  const { base, project } = await setup(t);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=', 'base64');
+  for (const [filename, expected] of [['人物参考测试.png', '人物参考测试.png'], ['café.png', 'café.png'], ['../../场景参考.png', '场景参考.png']]) {
+    const body = new FormData(); body.append('file', new Blob([png], { type: 'image/png' }), filename);
+    const response = await fetch(`${base}/api/projects/${project.id}/assets`, { method: 'POST', body });
+    assert.equal(response.status, 201); const asset = await response.json();
+    assert.equal(asset.name, expected);
+    assert.ok(!asset.url.includes(expected), 'display names never become actual storage paths');
+    const file = await fetch(base + asset.url); assert.deepEqual(Buffer.from(await file.arrayBuffer()), png);
+  }
+  // Deliberately send a genuine Latin-1 header byte, rather than browser UTF-8.
+  // The normalization must preserve it instead of corrupting an already valid name.
+  const boundary = 'gamestudio-latin1-filename';
+  const header = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="café.txt"\r\nContent-Type: text/plain\r\n\r\n`, 'latin1');
+  const response = await fetch(`${base}/api/projects/${project.id}/assets`, { method: 'POST', headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` }, body: Buffer.concat([header, Buffer.from('Design document'), Buffer.from(`\r\n--${boundary}--\r\n`)]) });
+  assert.equal(response.status, 201); assert.equal((await response.json()).name, 'café.txt');
+});

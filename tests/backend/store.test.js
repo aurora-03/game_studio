@@ -92,3 +92,39 @@ test('startup migration fixes only untouched demo genres and marks modified exam
   recovered.addVersion(shooter, { html, title: 'AI edited example', source: 'codex', model: 'gpt-6.1-sol' });
   assert.equal(shooter.demo, false);
 });
+
+test('new templates provide a complete semantic workflow while existing user graphs reload untouched', (t) => {
+  const dir = temp(t), store = new Store(dir, { seed: false });
+  const project = store.createProject({ name: 'Materials', templateId: 'forest-jump' });
+  assert.deepEqual(project.nodes.map((node) => node.type), ['brief', 'character', 'scene', 'prop', 'audio', 'game']);
+  const game = project.nodes.find((node) => node.type === 'game');
+  assert.equal(project.edges.length, 5); assert.ok(project.edges.every((edge) => edge.target === game.id));
+  for (const node of project.nodes.filter((node) => ['character', 'scene', 'prop', 'audio'].includes(node.type))) {
+    assert.equal(node.data.content, ''); assert.deepEqual(node.data.assetIds, []); assert.equal(Object.keys(node.data.specifications).length, 3);
+  }
+  const legacy = store.createProject({ name: 'Legacy graph', nodes: [{ id: newId(), type: 'text', position: { x: 24, y: 12 }, data: { content: 'Do not replace my user design' } }] });
+  store.persist(); const restored = new Store(dir, { seed: false });
+  assert.deepEqual(restored.getProject(legacy.id).nodes, legacy.nodes); assert.deepEqual(restored.getProject(legacy.id).edges, []);
+});
+
+test('clone remaps every bound file and preserves project-scoped nested mention identities', (t) => {
+  const store = new Store(temp(t), { seed: false }), project = store.createProject({ name: 'Clone semantic material' });
+  const first = { id: newId(), name: 'music.mp3', mimeType: 'audio/mpeg', extension: '.mp3', size: 5, createdAt: now() };
+  const second = { id: newId(), name: 'music2.mp3', mimeType: 'audio/mpeg', extension: '.mp3', size: 5, createdAt: now() };
+  for (const asset of [first, second]) {
+    asset.url = `/api/projects/${project.id}/assets/${asset.id}/file`; project.assets.push(asset);
+    fs.mkdirSync(path.dirname(store.assetPath(project.id, asset)), { recursive: true }); fs.writeFileSync(store.assetPath(project.id, asset), 'audio');
+  }
+  const audio = project.nodes.find((node) => node.type === 'audio'), scene = project.nodes.find((node) => node.type === 'scene');
+  scene.data.specifications = { layout: `Use this exact texture ${first.url}`, parallax: true };
+  audio.data.assetIds = [first.id, second.id]; audio.data.content = '进入 @森林 后循环';
+  audio.data.mentions = [{ nodeId: scene.id, label: '森林', start: 3, end: 6 }]; audio.data.referenceNodeIds = [scene.id];
+  const copy = store.cloneProject(project), clonedAudio = copy.nodes.find((node) => node.id === audio.id);
+  assert.deepEqual(clonedAudio.data.assetIds, copy.assets.map((asset) => asset.id));
+  assert.deepEqual(clonedAudio.data.mentions, audio.data.mentions); assert.deepEqual(clonedAudio.data.referenceNodeIds, [scene.id]);
+  assert.ok(copy.nodes.some((node) => node.id === clonedAudio.data.mentions[0].nodeId));
+  assert.equal(copy.nodes.find((node) => node.id === scene.id).data.specifications.layout, `Use this exact texture ${copy.assets[0].url}`);
+  assert.equal(copy.nodes.find((node) => node.id === scene.id).data.specifications.parallax, true);
+  assert.equal(scene.data.specifications.layout, `Use this exact texture ${first.url}`);
+  assert.deepEqual(audio.data.assetIds, [first.id, second.id]);
+});

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store, newId, now, isId, clone } from './store.js';
 import { DEFAULT_SETTINGS, MODEL, TEMPLATES } from './content.js';
-import { CodexHealth, JobQueue, resolveCodexBin } from './generator.js';
+import { CodexHealth, JobQueue, resolveCodexBin, validateMentions } from './generator.js';
 import { parseSchema, projectCreateSchema, projectPatchSchema, jobSchema, settingsSchema, versionSchema, validateHtml } from './validation.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,8 +18,35 @@ const mediaTypes = {
 
 function problem(status, message, code = 'REQUEST_FAILED') { const error = new Error(message); error.status = status; error.code = code; return error; }
 function assertId(id) { if (!isId(id)) throw problem(400, 'ID 格式无效。', 'INVALID_ID'); }
-function safeName(name) { return path.basename(name || 'asset').replace(/[\x00-\x1f\x7f]/g, '_').slice(0, 150); }
+function safeName(name) {
+  let decoded = name || 'asset';
+  // Busboy reads multipart filename bytes as Latin-1. Browser FormData sends
+  // UTF-8, so decode only when the received string is a lossless byte sequence.
+  // A genuine Latin-1 name such as café is preserved if it is not valid UTF-8.
+  if (/^[\u0000-\u00ff]*$/.test(decoded)) {
+    try { decoded = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(decoded, 'latin1')); }
+    catch { /* Already decoded Latin-1 text; keep its original spelling. */ }
+  }
+  return path.basename(decoded).replace(/[\x00-\x1f\x7f]/g, '_').slice(0, 150);
+}
 function downloadHeader(name) { return `attachment; filename="${name.replace(/[^a-zA-Z0-9._-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`; }
+function validateNodeDrafts(nodes, assets) {
+  const nodeMap = new Map(), assetIds = new Set(assets.map((asset) => asset.id));
+  for (const node of nodes) {
+    if (nodeMap.has(node.id)) throw problem(400, '节点 ID 重复。');
+    nodeMap.set(node.id, node);
+  }
+  for (const node of nodes) {
+    const data = node.data;
+    for (const id of [...(data.assetId ? [data.assetId] : []), ...(data.assetIds || [])]) {
+      if (!assetIds.has(id)) throw problem(400, `绑定的素材不存在或不属于当前项目：${id}。`, 'INVALID_REFERENCE');
+    }
+    const body = typeof data.content === 'string' ? data.content : typeof data.prompt === 'string' ? data.prompt : '';
+    // A deleted node can remain visible as an unresolved @ chip in a draft.
+    // Its text/range still has to be valid; job submission requires existence.
+    validateMentions(body, data.mentions, nodeMap, `节点「${data.label || data.title || node.type}」`, true);
+  }
+}
 function allowedLocalPorts(req) {
   return [...new Set(['4100', '5173', '5174', String(req.socket.localPort), String(process.env.PORT || ''), ...(process.env.GAMESTUDIO_ALLOWED_PORTS || '').split(',')])]
     .filter((port) => /^\d{1,5}$/.test(port) && Number(port) > 0 && Number(port) <= 65535);
@@ -119,6 +146,7 @@ export function createApp(options = {}) {
   app.get('/api/projects', (req, res) => res.json({ projects: store.data.projects.map((p) => store.publicProject(p)) }));
   app.post('/api/projects', (req, res) => {
     const input = parseSchema(projectCreateSchema, req.body);
+    if (input.nodes) validateNodeDrafts(input.nodes, []);
     const template = TEMPLATES.find((t) => t.id === input.templateId);
     if (input.templateId && !template) throw problem(400, '模板不存在。');
     const project = store.createProject({ ...input, settings: { ...store.data.settings, ...(template ? { genre: template.genre } : {}), ...(input.settings || {}) } });
@@ -128,6 +156,7 @@ export function createApp(options = {}) {
   app.patch('/api/projects/:id', (req, res) => {
     const project = getProject(req.params.id), patch = parseSchema(projectPatchSchema, req.body);
     if (patch.nodes) {
+      validateNodeDrafts(patch.nodes, project.assets);
       const seen = new Set(); for (const node of patch.nodes) { if (seen.has(node.id)) throw problem(400, '节点 ID 重复。'); seen.add(node.id); }
       for (const node of patch.nodes) {
         const existing = project.nodes.find((n) => n.id === node.id);
@@ -208,7 +237,14 @@ export function createApp(options = {}) {
     if (store.data.jobs.some((j) => j.projectId === p.id && ['queued', 'running'].includes(j.status))) throw problem(409, '生成过程中无法删除项目素材，请等待或取消任务。');
     for (const version of p.versions) if (store.readVersion(p.id, version.id).includes(asset.url)) throw problem(409, '该素材已被游戏版本引用，为保持历史版本可用，不能删除。');
     fs.rmSync(store.assetPath(p.id, asset), { force: true }); p.assets = p.assets.filter((a) => a.id !== asset.id);
-    p.nodes = p.nodes.filter((n) => n.data.assetId !== asset.id); p.edges = p.edges.filter((e) => p.nodes.some((n) => n.id === e.source) && p.nodes.some((n) => n.id === e.target));
+    // Uploaded files are bindings, not the material itself. Preserve a character,
+    // scene, prop or audio node and its design when its last file is detached.
+    p.nodes = p.nodes.filter((n) => !(n.type === 'asset' && n.data.assetId === asset.id));
+    for (const node of p.nodes) {
+      if (node.data.assetId === asset.id) { delete node.data.assetId; delete node.data.url; }
+      if (node.data.assetIds) node.data.assetIds = node.data.assetIds.filter((id) => id !== asset.id);
+    }
+    p.edges = p.edges.filter((e) => p.nodes.some((n) => n.id === e.source) && p.nodes.some((n) => n.id === e.target));
     p.updatedAt = now(); store.persist(); emit({ type: 'project.updated', project: store.publicProject(p) }); res.status(204).end();
   });
 

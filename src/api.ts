@@ -11,6 +11,10 @@ export type GameNode = Node<{
   versionId?: string;
   jobId?: string;
   assetId?: string;
+  assetIds?: string[];
+  specifications?: Record<string, string | number | boolean | null>;
+  referenceNodeIds?: string[];
+  mentions?: { nodeId: string; label: string; start: number; end: number }[];
   url?: string;
   mimeType?: string;
   [key: string]: unknown;

@@ -10,10 +10,26 @@ export const settingsSchema = z.object({
   sound: z.boolean().optional(), language: z.string().max(30).optional(),
 }).catchall(z.union([z.string().max(1000), z.number().finite(), z.boolean(), z.null()]));
 
+const referenceId = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/);
+export const mentionSchema = z.object({
+  nodeId: referenceId, label: z.string().min(1).max(200),
+  start: z.number().int().min(0), end: z.number().int().min(1),
+}).strict();
+
+// Keep unknown legacy fields, while validating fields that drive real model context.
+const nodeDataSchema = z.object({
+  content: z.string().max(30000).optional(),
+  description: z.string().max(15000).optional(),
+  assetId: referenceId.optional(), assetIds: z.array(referenceId).max(20).optional(),
+  referenceNodeIds: z.array(referenceId).max(100).optional(),
+  mentions: z.array(mentionSchema).max(100).optional(),
+  specifications: z.record(z.string().max(100), z.union([z.string().max(5000), z.number().finite(), z.boolean(), z.null()])).optional(),
+}).catchall(jsonValue);
+
 export const nodeSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/), type: z.string().max(50),
   position: z.object({ x: z.number().finite(), y: z.number().finite() }),
-  data: z.record(z.string(), jsonValue),
+  data: nodeDataSchema,
 }).passthrough();
 
 export const edgeSchema = z.object({
@@ -36,11 +52,13 @@ export const projectPatchSchema = z.object({
 }).strict();
 
 export const jobSchema = z.object({
-  prompt: z.string().trim().min(3, '请至少输入 3 个字符的游戏创意').max(30000),
+  // Do not trim: mention offsets describe exactly the text submitted by the editor.
+  prompt: z.string().min(3, '请至少输入 3 个字符的游戏创意').max(30000).refine((value) => value.trim().length >= 3, '请至少输入 3 个字符的游戏创意'),
   mode: z.enum(['generate', 'iterate']).default('generate'), nodeId: z.string().max(100).optional(),
   sourceVersionId: z.string().max(100).optional(), settings: settingsSchema.optional(),
   referenceAssetIds: z.array(z.string().max(100)).max(20).optional(),
   referenceNodeIds: z.array(z.string().max(100)).max(100).optional(),
+  mentions: z.array(mentionSchema).max(100).optional(),
 }).strict();
 
 export const versionSchema = z.object({

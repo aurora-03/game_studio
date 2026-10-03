@@ -90,15 +90,21 @@ export class Store {
       id: newId(), name, description, templateId: template?.id || null, status: 'active', demo,
       theme: template?.theme || '#c9ff5b', genre: template?.genre || settings.genre || 'custom',
       nodes: nodes || [
-        { id: newId(), type: 'brief', position: { x: 110, y: 170 }, data: { title: '游戏创意', prompt: template?.prompt || '', content: template?.prompt || '', status: 'idle' } },
-        { id: newId(), type: 'game', position: { x: 520, y: 150 }, data: { title: '游戏预览', status: 'idle' } },
+        { id: newId(), type: 'brief', position: { x: 70, y: 400 }, data: { title: '游戏创意', content: template?.prompt || '', mentions: [], status: 'idle' } },
+        { id: newId(), type: 'character', position: { x: 460, y: 60 }, data: { title: '主角素材', content: '', specifications: { appearance: '', personality: '', abilities: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'scene', position: { x: 460, y: 780 }, data: { title: '场景素材', content: '', specifications: { environment: '', layout: '', camera: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'prop', position: { x: 860, y: 60 }, data: { title: '道具素材', content: '', specifications: { usage: '', interaction: '', rules: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'audio', position: { x: 860, y: 780 }, data: { title: '音频素材', content: '', specifications: { mood: '', trigger: '', mixing: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'game', position: { x: 1300, y: 400 }, data: { title: '游戏预览', content: '', mentions: [], status: 'idle' } },
       ],
-      edges: [], viewport: { x: 0, y: 0, zoom: 1 },
+      edges: [],
       settings: { ...DEFAULT_SETTINGS, ...(template?.settings || {}), ...this.data.settings, ...settings, genre: settings.genre || template?.genre || this.data.settings.genre || DEFAULT_SETTINGS.genre },
       messages: [], assets: [], versions: [], activeVersionId: null,
       createdAt: timestamp, updatedAt: timestamp,
     };
-    if (!nodes) project.edges.push({ id: newId(), source: project.nodes[0].id, target: project.nodes[1].id, animated: false });
+    if (!nodes) for (const source of project.nodes.filter((node) => node.type !== 'game')) {
+      project.edges.push({ id: newId(), source: source.id, target: project.nodes.find((node) => node.type === 'game').id, animated: false });
+    }
     this.data.projects.unshift(project);
     return project;
   }
@@ -158,6 +164,9 @@ export class Store {
       for (const [key, value] of Object.entries(node.data)) if (typeof value === 'string') {
         let rewritten = value; for (const [before, after] of oldToNew) rewritten = rewritten.split(before).join(after); node.data[key] = rewritten;
       }
+      if (node.data.specifications) for (const [key, value] of Object.entries(node.data.specifications)) if (typeof value === 'string') {
+        let rewritten = value; for (const [before, after] of oldToNew) rewritten = rewritten.split(before).join(after); node.data.specifications[key] = rewritten;
+      }
       delete node.data.jobId;
       if (node.data.versionId) {
         node.data.versionId = versionIds.get(node.data.versionId);
@@ -167,6 +176,10 @@ export class Store {
         const index = original.assets.findIndex((a) => a.id === node.data.assetId);
         if (index >= 0) Object.assign(node.data, { assetId: copy.assets[index].id, url: copy.assets[index].url });
       }
+      if (node.data.assetIds) node.data.assetIds = node.data.assetIds.map((id) => {
+        const index = original.assets.findIndex((asset) => asset.id === id);
+        return index >= 0 ? copy.assets[index].id : id;
+      });
       if (['queued', 'running'].includes(node.data.status)) node.data.status = 'idle';
     }
     this.data.projects.unshift(copy);
@@ -176,7 +189,7 @@ export class Store {
   publicProject(project) { return clone(project); }
   publicJob(job) {
     const result = clone(job);
-    delete result.pid; delete result.directory;
+    delete result.pid; delete result.directory; delete result._generationContext;
     return result;
   }
 

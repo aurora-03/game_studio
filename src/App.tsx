@@ -91,10 +91,16 @@ import {
   Keyboard,
   BookOpen,
   AtSign,
+  UserRound,
+  Trees,
+  Music2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import clsx from "clsx";
 import { api, request } from "./api";
+import { MentionInput } from "./components/MentionInput";
+import { insertMention, referencedNodeIds } from "./mentions";
+import type { MentionToken } from "./mentions";
 import type {
   Asset,
   Bootstrap,
@@ -2086,6 +2092,11 @@ type NodeActions = {
   useReference: (id: string) => void;
   genre: string;
   projectId: string;
+  nodes: GameNode[];
+  edges: Edge[];
+  assets: Asset[];
+  bindAssets: (id: string) => void;
+  uploadAssets: (id: string) => void;
 };
 const NodeContext = createContext<NodeActions>({
   edit: () => {},
@@ -2094,7 +2105,60 @@ const NodeContext = createContext<NodeActions>({
   useReference: () => {},
   genre: "arcade",
   projectId: "",
+  nodes: [],
+  edges: [],
+  assets: [],
+  bindAssets: () => {},
+  uploadAssets: () => {},
 });
+const materialTypes = ["character", "scene", "prop", "audio"];
+const nodeRoles: Record<string, { label: string; icon: LucideIcon; hint: string; fields?: { key: string; label: string; placeholder: string }[] }> = {
+  brief: { label: "创作需求", icon: FileText, hint: "玩法、操作、目标与画面风格" },
+  character: { label: "人物素材", icon: UserRound, hint: "人物外观、性格与游戏能力", fields: [
+    { key: "appearance", label: "外观设定", placeholder: "服装、颜色、比例和动画风格" },
+    { key: "personality", label: "性格与行为", placeholder: "角色性格、移动与行为特点" },
+    { key: "abilities", label: "角色能力", placeholder: "操作、技能、数值与限制" },
+  ] },
+  scene: { label: "场景素材", icon: Trees, hint: "环境、布局与镜头视角", fields: [
+    { key: "environment", label: "环境氛围", placeholder: "地形、光照、色彩与世界设定" },
+    { key: "layout", label: "关卡布局", placeholder: "路径、平台、障碍与出生点" },
+    { key: "camera", label: "镜头视角", placeholder: "侧视 / 俯视、跟随与缩放" },
+  ] },
+  prop: { label: "道具素材", icon: Box, hint: "道具用途、交互与规则", fields: [
+    { key: "usage", label: "道具用途", placeholder: "道具类型、外观与用途" },
+    { key: "interaction", label: "交互方式", placeholder: "拾取、使用、碰撞与效果" },
+    { key: "rules", label: "生效规则", placeholder: "数量、持续时间、冷却与得分" },
+  ] },
+  audio: { label: "音频素材", icon: Music2, hint: "配乐、音效与触发时机", fields: [
+    { key: "mood", label: "声音氛围", placeholder: "节奏、情绪与音乐风格" },
+    { key: "trigger", label: "触发时机", placeholder: "背景循环、跳跃、拾取与结束" },
+    { key: "mixing", label: "播放规则", placeholder: "音量、循环、淡入淡出与静音" },
+  ] },
+  asset: { label: "参考素材", icon: Images, hint: "图片、音频或文档参考" },
+  text: { label: "文本笔记", icon: FileText, hint: "灵感、剧情与修改说明" },
+  game: { label: "游戏生成", icon: Gamepad2, hint: "整合上游素材，生成可玩游戏" },
+};
+const assetIdsOf = (data: GameNode["data"]) => Array.from(new Set([
+  ...(Array.isArray(data.assetIds) ? data.assetIds : []),
+  ...(typeof data.assetId === "string" ? [data.assetId] : []),
+]));
+const titleOf = (node: GameNode) => String(node.data.label || node.data.title || nodeRoles[node.type || "text"]?.label || "未命名节点");
+function AssetMedia({ asset }: { asset: Asset }) {
+  if (asset.mimeType.startsWith("image/")) return <img src={asset.url} alt={asset.name} />;
+  if (asset.mimeType.startsWith("audio/")) return <div className="material-audio"><Volume2 size={22} /><audio className="nodrag nowheel" controls preload="metadata" src={asset.url} /></div>;
+  return <div className="material-document"><FileText size={23} /><a className="nodrag" href={asset.url} target="_blank" rel="noreferrer">{asset.name}<ExternalLink size={11} /></a></div>;
+}
+function NodeAssets({ id, data, role }: { id: string; data: GameNode["data"]; role: string }) {
+  const actions = useContext(NodeContext), ids = assetIdsOf(data), bound = actions.assets.filter((asset) => ids.includes(asset.id));
+  return <div className="node-material-files nodrag nowheel">
+    {bound.length ? <div className="bound-assets">{bound.map((asset) => <div className="bound-asset" key={asset.id}>
+      <AssetMedia asset={asset} />
+      <div className="bound-asset-caption"><span title={asset.name}>{asset.name}</span><button type="button" aria-label={`解除绑定 ${asset.name}`} onClick={() => actions.edit(id, { assetIds: ids.filter((value) => value !== asset.id), assetId: undefined, url: undefined, mimeType: undefined })}><X size={12} /></button></div>
+    </div>)}</div> : <div className="material-empty"><span>{nodeRoles[role]?.label || "素材"}参考</span><small>可先填写设定，再绑定图片、音频或文档</small></div>}
+    {ids.length > bound.length && <p className="material-missing">部分素材已删除，请重新绑定。</p>}
+    <div className="material-bind-actions"><button type="button" onClick={() => actions.bindAssets(id)}><Library size={12} />选择素材</button><button type="button" onClick={() => actions.uploadAssets(id)}><Upload size={12} />上传并绑定</button><span>{bound.length} 个文件</span></div>
+  </div>;
+}
 function GameThumbnail({ url, title }: { url: string; title: string }) {
   const container = useRef<HTMLDivElement>(null),
     [scale, setScale] = useState(0.27);
@@ -2124,33 +2188,27 @@ function GameThumbnail({ url, title }: { url: string; title: string }) {
 function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
   const actions = useContext(NodeContext),
     isGame = type === "game",
-    isAsset = type === "asset";
-  const Icon = isGame
-    ? Gamepad2
-    : isAsset
-      ? Images
-      : type === "brief"
-        ? FileText
-        : FileText;
+    isAsset = type === "asset",
+    isMaterial = materialTypes.includes(type),
+    role = nodeRoles[type] || nodeRoles.text,
+    specifications = (data.specifications || {}) as Record<string, string>,
+    sourceIds = new Set([...actions.edges.filter((edge) => edge.target === id).map((edge) => edge.source), ...(data.referenceNodeIds || []), ...referencedNodeIds(data.mentions || [])]),
+    inputs = actions.nodes.filter((node) => sourceIds.has(node.id));
+  const Icon = role.icon;
   return (
     <div
       className={clsx(
         "canvas-node",
         selected && "selected",
         isGame && "game-node",
+        isMaterial && "material-node",
       )}
     >
       <Handle type="target" position={Position.Left} />
       <div className="node-header">
         <span className={clsx("node-type", type)}>
           <Icon size={13} />
-          {isGame
-            ? "游戏"
-            : isAsset
-              ? "参考素材"
-              : type === "brief"
-                ? "创作需求"
-                : "文本"}
+          {role.label}
         </span>
         <div className="node-actions nodrag">
           <IconButton
@@ -2221,6 +2279,7 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
             </span>
             <span>HTML5</span>
           </div>
+          {inputs.length > 0 && <div className="game-context"><span><Network size={11} />制作输入 · {inputs.length} 个节点</span><div>{inputs.map((input) => { const InputIcon = nodeRoles[input.type || "text"]?.icon || FileText; return <span key={input.id} title={`${titleOf(input)} · ${nodeRoles[input.type || "text"]?.label || "创作节点"}`}><InputIcon size={10} />{titleOf(input)}</span>; })}</div></div>}
           {data.error && <p className="node-error">{String(data.error)}</p>}
           {data.summary && (
             <p className="node-summary">{String(data.summary)}</p>
@@ -2231,41 +2290,27 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
               {String(data.controls)}
             </p>
           )}
-        </>
-      ) : isAsset ? (
-        <>
-          <div className="node-asset-preview">
-            {String(data.mimeType || "").startsWith("image/") ? (
-              <img
-                src={String(data.url || "")}
-                alt={String(data.title || "参考素材")}
-              />
-            ) : String(data.mimeType || "").startsWith("audio/") ? (
-              <>
-                <Volume2 size={32} />
-                <audio
-                  className="nodrag"
-                  controls
-                  src={String(data.url || "")}
-                />
-              </>
-            ) : (
-              <FileText size={32} />
-            )}
-          </div>
-          <p className="node-summary">通过 @ 引用素材，或连接到游戏节点</p>
+          <MentionInput className="nodrag nowheel node-content game-instructions" ariaLabel="游戏生成描述" value={String(data.content ?? "")} mentions={data.mentions || []} nodes={actions.nodes.filter((node) => node.id !== id)} onChange={(content, mentions) => actions.edit(id, { content, mentions })} placeholder="本游戏的补充要求，输入 @ 引用人物或场景…" compact />
         </>
       ) : (
         <>
-          <textarea
+          {(isMaterial || isAsset) && <NodeAssets id={id} data={data} role={type} />}
+          {role.fields && <div className="material-specifications nodrag nowheel">{role.fields.map((field) => <label key={field.key}>
+            <span>{field.label}</span>
+            <input aria-label={`${role.label}${field.label}`} value={String(specifications[field.key] ?? "")} placeholder={field.placeholder} onChange={(event) => actions.edit(id, { specifications: { ...specifications, [field.key]: event.target.value } })} />
+          </label>)}</div>}
+          <MentionInput
             className="nodrag nowheel node-content"
-            aria-label={type === "brief" ? "游戏需求" : "文本内容"}
+            ariaLabel={`${role.label}描述`}
             value={String(data.content ?? data.prompt ?? "")}
-            onChange={(e) => actions.edit(id, { content: e.target.value })}
+            mentions={data.mentions || []}
+            nodes={actions.nodes.filter((node) => node.id !== id)}
+            onChange={(content, mentions) => actions.edit(id, { content, mentions })}
+            compact
             placeholder={
               type === "brief"
                 ? "描述游戏玩法、操作方式、目标和画面风格…"
-                : "记录创作想法，或写下迭代方向…"
+                : isMaterial || isAsset ? `${role.hint}，输入 @ 引用其他节点…` : "记录创作想法，或写下迭代方向…"
             }
           />
           <div className="node-footer">
@@ -2285,6 +2330,10 @@ const nodeTypes = {
   text: CanvasNode,
   asset: CanvasNode,
   game: CanvasNode,
+  character: CanvasNode,
+  scene: CanvasNode,
+  prop: CanvasNode,
+  audio: CanvasNode,
 };
 function Studio({
   project,
@@ -2310,9 +2359,14 @@ function Studio({
     [view, setView] = useState<"canvas" | "storyboard">("canvas"),
     [director, setDirector] = useState(() => window.innerWidth > 640),
     [assetsOpen, setAssetsOpen] = useState(false),
+    [assetTarget, setAssetTarget] = useState<string | undefined>(),
+    [assetNodeRole, setAssetNodeRole] = useState("asset"),
+    [assetSearch, setAssetSearch] = useState(""),
+    [assetCategory, setAssetCategory] = useState("all"),
     [versionsOpen, setVersionsOpen] = useState(false),
     [addOpen, setAddOpen] = useState(false),
     [prompt, setPrompt] = useState(""),
+    [promptMentions, setPromptMentions] = useState<MentionToken[]>([]),
     [refs, setRefs] = useState<string[]>([]),
     [refsOpen, setRefsOpen] = useState(false),
     [mode, setMode] = useState<"generate" | "iterate">("generate"),
@@ -2342,6 +2396,7 @@ function Studio({
     ),
     savingPromise = useRef<Promise<unknown>>(Promise.resolve()),
     fileInput = useRef<HTMLInputElement>(null),
+    uploadTarget = useRef<string | undefined>(undefined),
     chatEnd = useRef<HTMLDivElement>(null),
     idRef = useRef(project.id),
     settingsRef = useRef(settings),
@@ -2354,7 +2409,9 @@ function Studio({
     activeVersion =
       project.versions.find((v) => v.id === project.activeVersionId) ||
       project.versions[0],
-    selected = nodes.find((n) => n.selected);
+    selected = nodes.find((n) => n.selected),
+    gameNodes = nodes.filter((node) => node.type === "game"),
+    outputNode = nodes.find((node) => node.type === "game" && node.selected) || gameNodes.find((node) => node.id === settings.outputNodeId) || (gameNodes.length === 1 ? gameNodes[0] : undefined);
   nodesRef.current = nodes;
   edgesRef.current = edges;
   projectRef.current = project;
@@ -2365,6 +2422,7 @@ function Studio({
       setEdges(project.edges);
       setSettings(project.settings);
       setPrompt("");
+      setPromptMentions([]);
       setRefs([]);
       knownNodeIds.current = new Set(project.nodes.map((n) => n.id));
       savedGraph.current = JSON.stringify({
@@ -2411,6 +2469,14 @@ function Studio({
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [project.messages.length, activeJob?.logs?.length]);
+  useEffect(() => {
+    setRefs((current) => current.every((id) => nodes.some((node) => node.id === id)) ? current : current.filter((id) => nodes.some((node) => node.id === id)));
+    if (assetTarget && !nodes.some((node) => node.id === assetTarget)) setAssetTarget(undefined);
+  }, [nodes, assetTarget]);
+  useEffect(() => {
+    if (outputNode && settings.outputNodeId !== outputNode.id) setSettings((current) => ({ ...current, outputNodeId: outputNode.id }));
+    if (!outputNode?.data.versionId) setMode("generate");
+  }, [outputNode?.id, outputNode?.data.versionId, settings.outputNodeId]);
   const saveGraph = useCallback(
     async (extra: Record<string, unknown> = {}) => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -2485,21 +2551,16 @@ function Studio({
       x: window.innerWidth * (director ? 0.45 : 0.6),
       y: window.innerHeight * 0.43,
     });
-    const titles: Record<string, string> = {
-      brief: "游戏创作需求",
-      text: "创作笔记",
-      game: "游戏生成",
-      asset: asset?.name || "参考素材",
-    };
     const node: GameNode = {
       id: uid(),
       type,
       position: center,
       data: {
-        title: titles[type],
+        title: asset?.name || nodeRoles[type]?.label || "创作笔记",
         content: "",
+        ...(materialTypes.includes(type) ? { specifications: {} } : {}),
         ...(asset
-          ? { assetId: asset.id, url: asset.url, mimeType: asset.mimeType }
+          ? { assetIds: [asset.id] }
           : {}),
       },
     };
@@ -2509,7 +2570,26 @@ function Studio({
       { ...node, selected: true },
     ]);
     setAddOpen(false);
+    if (type === "game") { setSettings((current) => ({ ...current, outputNodeId: node.id })); setMode("generate"); }
     return node.id;
+  };
+  const insertWorkflow = () => {
+    const start = flow.screenToFlowPosition({ x: window.innerWidth * 0.32, y: window.innerHeight * 0.3 }),
+      existingMaxX = Math.max(start.x - 500, ...nodesRef.current.map((node) => node.position.x + 400)),
+      x = nodesRef.current.length ? existingMaxX + 100 : start.x,
+      briefId = uid(), gameId = uid();
+    const brief: GameNode = { id: briefId, type: "brief", position: { x, y: start.y + 340 }, data: { title: "游戏创作需求", content: "" } },
+      game: GameNode = { id: gameId, type: "game", selected: true, position: { x: x + 1040, y: start.y + 340 }, data: { title: "整合素材 · 生成游戏", status: "idle", content: "" } },
+      materials: GameNode[] = materialTypes.map((type, index) => ({ id: uid(), type, position: { x: x + 360 + (index % 2) * 330, y: start.y + Math.floor(index / 2) * 720 }, data: { title: nodeRoles[type].label, content: "", specifications: {} } }));
+    const added = [brief, ...materials, game], links = [brief, ...materials].map((node) => ({ id: uid(), source: node.id, target: gameId, type: "smoothstep" }));
+    for (const node of added) knownNodeIds.current.add(node.id);
+    setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...added]);
+    setEdges((current) => [...current, ...links]);
+    setSettings((current) => ({ ...current, outputNodeId: gameId }));
+    setMode("generate");
+    setAddOpen(false);
+    setTimeout(() => void flow.fitView({ nodes: added, padding: 0.13, duration: 400 }), 100);
+    notify("已加入完整制作工作流；填写人物、场景、道具和声音设定，再上传参考素材。");
   };
   const editNode = useCallback(
     (id: string, updates: Record<string, unknown>) =>
@@ -2537,9 +2617,13 @@ function Studio({
     [jobs, notify],
   );
   const useReference = useCallback((id: string) => {
-    setRefs((rs) => (rs.includes(id) ? rs : [...rs, id]));
+    const node = nodesRef.current.find((value) => value.id === id);
+    if (!node) return;
+    const result = insertMention(prompt, promptMentions, node);
+    setPrompt(result.value);
+    setPromptMentions(result.mentions);
     setDirector(true);
-  }, []);
+  }, [prompt, promptMentions]);
   const previewNode = useCallback(
     (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id),
@@ -2568,31 +2652,62 @@ function Studio({
   );
   const upload = async (files: FileList | null) => {
     if (!files?.length) return;
+    const targetId = uploadTarget.current;
+    const target = nodesRef.current.find((node) => node.id === targetId);
+    if (targetId && !target) {
+      notify("上传目标已删除，请重新选择绑定节点。");
+      uploadTarget.current = undefined;
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
+    if (target && assetIdsOf(target.data).length + files.length > 20) {
+      notify("每个素材节点最多绑定 20 个文件，请减少本次选择。");
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
     setUploading(true);
+    let libraryOnly = false;
     try {
       for (const f of Array.from(files)) {
         const asset = await api.upload(project.id, f);
-        addNode("asset", asset);
+        if (targetId) {
+          if (nodesRef.current.some((node) => node.id === targetId)) setNodes((current) => current.map((node) => node.id === targetId ? { ...node, data: { ...node.data, assetIds: Array.from(new Set([...assetIdsOf(node.data), asset.id])), assetId: undefined } } : node));
+          else libraryOnly = true;
+        } else addNode(assetNodeRole, asset);
       }
       onProject(await api.project(project.id));
-      notify("素材已上传并加入画布");
+      notify(libraryOnly ? "上传目标已删除，文件已保存在素材库，请重新选择节点绑定。" : targetId ? "素材已上传并绑定到节点" : "素材已上传并加入画布");
     } catch (e) {
       notify((e as Error).message);
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
+      uploadTarget.current = undefined;
     }
   };
   const generate = async (e?: FormEvent) => {
     e?.preventDefault();
     if (activeJob || submitting) return;
+    const currentNodes = nodesRef.current,
+      currentGames = currentNodes.filter((node) => node.type === "game"),
+      chosenTarget = currentGames.find((node) => node.selected) || currentGames.find((node) => node.id === settingsRef.current.outputNodeId) || (currentGames.length === 1 ? currentGames[0] : undefined);
+    if (currentGames.length && !chosenTarget) { notify("请选择 AI 导演中的生成目标，或点击画布里的游戏节点。"); return; }
+    if (mode === "iterate" && !chosenTarget?.data.versionId) { notify("当前生成目标尚无游戏版本，请先生成游戏。"); return; }
+    const contextIds = new Set<string>(), pending = chosenTarget ? [chosenTarget.id] : [];
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (contextIds.has(id)) continue;
+      contextIds.add(id);
+      const node = currentNodes.find((candidate) => candidate.id === id);
+      pending.push(...edgesRef.current.filter((edge) => edge.target === id).map((edge) => edge.source), ...(node?.data.referenceNodeIds || []), ...referencedNodeIds(node?.data.mentions || []));
+    }
     const content =
-      prompt.trim() ||
-      nodesRef.current
-        .filter((n) => n.type === "brief")
+      (prompt.trim() ? prompt : "") ||
+      currentNodes
+        .filter((n) => n.type === "brief" && (!chosenTarget || contextIds.has(n.id)))
         .map((n) => String(n.data.content ?? n.data.prompt ?? ""))
         .join("\n")
-        .trim();
+        .trim() || String(chosenTarget?.data.content ?? "").trim();
     if (!content) {
       notify("请先描述你想制作的游戏");
       return;
@@ -2603,21 +2718,7 @@ function Studio({
     }
     setSubmitting(true);
     try {
-      const picked = nodesRef.current.find((n) => n.selected);
-      const connectedGame = picked
-        ? edgesRef.current
-            .filter((e) => e.source === picked.id)
-            .map((e) =>
-              nodesRef.current.find(
-                (n) => n.id === e.target && n.type === "game",
-              ),
-            )
-            .find(Boolean)
-        : undefined;
-      let target =
-        nodesRef.current.find((n) => n.selected && n.type === "game") ||
-        connectedGame ||
-        nodesRef.current.find((n) => n.type === "game");
+      let target = chosenTarget;
       let nextNodes = nodesRef.current;
       if (!target) {
         const briefs = nextNodes.filter(
@@ -2626,6 +2727,7 @@ function Studio({
         target = {
           id: uid(),
           type: "game",
+          selected: true,
           position: {
             x: (briefs[0]?.position.x || 0) + 390,
             y: briefs[0]?.position.y || 0,
@@ -2644,26 +2746,29 @@ function Studio({
         edgesRef.current = [...edgesRef.current, ...newEdges];
         setNodes(nextNodes);
         setEdges(edgesRef.current);
+        setSettings((current) => ({ ...current, outputNodeId: target!.id }));
       }
-      await saveGraph({ settings });
-      const referenced = nextNodes.filter((n) => refs.includes(n.id));
+      await saveGraph();
+      const mentionTokens = prompt.trim() ? promptMentions : [],
+        allReferences = Array.from(new Set([...refs, ...referencedNodeIds(mentionTokens)])),
+        referenced = nextNodes.filter((n) => allReferences.includes(n.id));
       const job = await api.generate(project.id, {
         prompt: content,
         mode,
         nodeId: target.id,
         sourceVersionId:
           mode === "iterate"
-            ? String(target.data.versionId || activeVersion?.id || "") ||
+            ? String(target.data.versionId || "") ||
               undefined
             : undefined,
         settings,
-        referenceNodeIds: refs,
-        referenceAssetIds: referenced
-          .filter((n) => n.data.assetId)
-          .map((n) => n.data.assetId),
+        mentions: mentionTokens,
+        referenceNodeIds: allReferences,
+        referenceAssetIds: Array.from(new Set(referenced.flatMap((n) => assetIdsOf(n.data)))),
       });
       editNode(target.id, { status: job.status, jobId: job.id, error: "" });
       setPrompt("");
+      setPromptMentions([]);
       setRefs([]);
       notify("创作任务已提交，进度将实时显示");
     } catch (e) {
@@ -2673,17 +2778,32 @@ function Studio({
     }
   };
   const tidy = () => {
-    const order = [...nodes].sort(
+    const order = [...nodesRef.current].sort(
       (a, b) =>
-        (({ brief: 0, text: 1, asset: 2, game: 3 })[a.type || "text"] ?? 1) -
-        ({ brief: 0, text: 1, asset: 2, game: 3 }[b.type || "text"] ?? 1),
+        (({ brief: 0, text: 1, character: 2, scene: 3, prop: 4, audio: 5, asset: 6, game: 7 })[a.type || "text"] ?? 1) -
+        ({ brief: 0, text: 1, character: 2, scene: 3, prop: 4, audio: 5, asset: 6, game: 7 }[b.type || "text"] ?? 1),
     );
-    setNodes(
-      order.map((n, i) => ({
-        ...n,
-        position: { x: (i % 3) * 360, y: Math.floor(i / 3) * 390 },
-      })),
-    );
+    const measured = new Map(flow.getNodes().map((node) => [node.id, node])),
+      sizeOf = (node: GameNode) => {
+        const actual = measured.get(node.id) || node;
+        return {
+          width: actual.measured?.width || actual.width || (materialTypes.includes(node.type || "") ? 300 : 276),
+          height: actual.measured?.height || actual.height || (materialTypes.includes(node.type || "") ? 680 : node.type === "game" ? 470 : 360),
+        };
+      },
+      columnWidths = [0, 1, 2].map((column) => Math.max(300, ...order.filter((_, index) => index % 3 === column).map((node) => sizeOf(node).width))),
+      positioned: GameNode[] = [];
+    let rowTop = 0;
+    for (let offset = 0; offset < order.length; offset += 3) {
+      const row = order.slice(offset, offset + 3);
+      let columnLeft = 0;
+      row.forEach((node, column) => {
+        positioned.push({ ...node, position: { x: columnLeft, y: rowTop } });
+        columnLeft += columnWidths[column] + 80;
+      });
+      rowTop += Math.max(...row.map((node) => sizeOf(node).height)) + 80;
+    }
+    setNodes(positioned);
     setTimeout(() => void flow.fitView({ padding: 0.18, duration: 350 }), 100);
   };
   const activate = async (v: Version) => {
@@ -2740,6 +2860,8 @@ function Studio({
         .catch((e) => notify(e.message));
   };
   const refNodes = nodes.filter((n) => refs.includes(n.id));
+  const bindingNode = nodes.find((node) => node.id === assetTarget),
+    filteredAssets = project.assets.filter((asset) => asset.name.toLocaleLowerCase().includes(assetSearch.toLocaleLowerCase()) && (assetCategory === "all" || (assetCategory === "document" ? !/^(image|audio)\//.test(asset.mimeType) : asset.mimeType.startsWith(`${assetCategory}/`))));
   return (
     <div className="studio">
       <header className="studio-header">
@@ -2843,6 +2965,11 @@ function Studio({
                 useReference,
                 genre: String(settings.genre || "arcade"),
                 projectId: project.id,
+                nodes,
+                edges,
+                assets: project.assets,
+                bindAssets: (id) => { setAssetTarget(id); setAssetsOpen(true); },
+                uploadAssets: (id) => { uploadTarget.current = id; fileInput.current?.click(); },
               }}
             >
               <ReactFlow
@@ -2908,6 +3035,7 @@ function Studio({
                         ? "#65d8ef"
                         : n.type === "asset"
                           ? "#af99de"
+                          : materialTypes.includes(n.type || "") ? "#87b5a5"
                           : "#666"
                     }
                     maskColor="rgba(0,0,0,.6)"
@@ -2939,11 +3067,7 @@ function Studio({
                     <div className="storyboard-card-header">
                       <span>
                         {String(i + 1).padStart(2, "0")} /{" "}
-                        {n.type === "game"
-                          ? "游戏"
-                          : n.type === "asset"
-                            ? "素材"
-                            : "需求"}
+                        {nodeRoles[n.type || "text"]?.label || "文本笔记"}
                       </span>
                       <IconButton
                         icon={AtSign}
@@ -2984,28 +3108,18 @@ function Studio({
                           {n.data.versionId ? "试玩游戏" : "等待生成"}
                         </span>
                       </button>
-                    ) : n.type === "asset" &&
-                      String(n.data.mimeType).startsWith("image/") ? (
-                      <img
-                        src={String(n.data.url)}
-                        alt={String(n.data.label || n.data.title)}
-                      />
                     ) : (
-                      <textarea
-                        value={String(n.data.content ?? n.data.prompt ?? "")}
-                        onChange={(e) =>
-                          editNode(n.id, { content: e.target.value })
-                        }
-                        placeholder="写下你的想法…"
-                      />
+                      <>
+                        {(materialTypes.includes(n.type || "") || n.type === "asset") && <div className="storyboard-material-assets">{project.assets.filter((asset) => assetIdsOf(n.data).includes(asset.id)).map((asset) => <div key={asset.id}><AssetMedia asset={asset} /></div>)}</div>}
+                        <MentionInput value={String(n.data.content ?? n.data.prompt ?? "")} mentions={n.data.mentions || []} nodes={nodes.filter((node) => node.id !== n.id)} onChange={(content, mentions) => editNode(n.id, { content, mentions })} ariaLabel={`${nodeRoles[n.type || "text"]?.label || "文本"}描述`} placeholder={`${nodeRoles[n.type || "text"]?.hint || "创作说明"}，输入 @ 引用节点…`} compact />
+                        {n.data.specifications && <div className="storyboard-specifications">{nodeRoles[n.type || "text"]?.fields?.map((field) => n.data.specifications?.[field.key] ? <span key={field.key}>{field.label}：{String(n.data.specifications[field.key])}</span> : null)}</div>}
+                      </>
                     )}
-                    <h3>{String(n.data.title || "未命名节点")}</h3>
+                    <h3>{titleOf(n)}</h3>
                     <p>
                       {n.type === "game"
                         ? statusNames[String(n.data.status)] || "等待生成"
-                        : n.type === "asset"
-                          ? "参考素材"
-                          : "创作上下文"}
+                        : `${assetIdsOf(n.data).length} 个素材 · ${edges.filter((edge) => edge.source === n.id).length} 个下游连接`}
                     </p>
                   </div>
                 ))}
@@ -3036,26 +3150,8 @@ function Studio({
               {addOpen && (
                 <div className="add-node-menu">
                   <strong>添加到画布</strong>
-                  {[
-                    {
-                      type: "brief",
-                      icon: FileText,
-                      label: "创作需求",
-                      hint: "玩法、目标与风格",
-                    },
-                    {
-                      type: "text",
-                      icon: FileText,
-                      label: "文本笔记",
-                      hint: "灵感与修改说明",
-                    },
-                    {
-                      type: "game",
-                      icon: Gamepad2,
-                      label: "游戏节点",
-                      hint: "生成与试玩游戏",
-                    },
-                  ].map(({ type, icon: Icon, label, hint }) => (
+                  <button className="add-workflow" onClick={insertWorkflow}><Network size={18} /><div>游戏制作工作流<small>需求 + 人物 + 场景 + 道具 + 音频 + 游戏</small></div></button>
+                  {Object.entries(nodeRoles).filter(([type]) => type !== "asset").map(([type, { icon: Icon, label, hint }]) => (
                     <button key={type} onClick={() => addNode(type)}>
                       <Icon size={18} />
                       <div>
@@ -3066,6 +3162,7 @@ function Studio({
                   ))}
                   <button
                     onClick={() => {
+                      uploadTarget.current = undefined;
                       fileInput.current?.click();
                       setAddOpen(false);
                     }}
@@ -3153,14 +3250,14 @@ function Studio({
                   <button
                     className="button small"
                     disabled={uploading}
-                    onClick={() => fileInput.current?.click()}
+                    onClick={() => { uploadTarget.current = assetTarget; fileInput.current?.click(); }}
                   >
                     {uploading ? (
                       <Loader2 size={13} className="spin" />
                     ) : (
                       <Upload size={13} />
                     )}
-                    上传素材
+                    {assetTarget ? "上传并绑定" : "上传素材"}
                   </button>
                   <IconButton
                     icon={X}
@@ -3169,13 +3266,28 @@ function Studio({
                   />
                 </div>
               </header>
-              {project.assets.length ? (
+              <div className="asset-dock-options">
+                <label className="asset-search"><Search size={13} /><input aria-label="搜索项目素材" placeholder="搜索素材名称…" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /></label>
+                <select aria-label="素材文件类型" value={assetCategory} onChange={(event) => setAssetCategory(event.target.value)}><option value="all">全部文件</option><option value="image">图片</option><option value="audio">音频</option><option value="document">文档</option></select>
+                <select aria-label="素材绑定目标" value={assetTarget || ""} onChange={(event) => setAssetTarget(event.target.value || undefined)}><option value="">新建素材节点</option>{nodes.filter((node) => materialTypes.includes(node.type || "") || node.type === "asset").map((node) => <option key={node.id} value={node.id}>{nodeRoles[node.type || "asset"]?.label || "素材"} · {titleOf(node)} · 节点 {nodes.findIndex((candidate) => candidate.id === node.id) + 1}</option>)}</select>
+                {!assetTarget && <select aria-label="新建素材节点类型" value={assetNodeRole} onChange={(event) => setAssetNodeRole(event.target.value)}>{[...materialTypes, "asset"].map((type) => <option key={type} value={type}>{nodeRoles[type].label}</option>)}</select>}
+              </div>
+              <p className="dock-instructions">{assetTarget ? `点击素材绑定到「${bindingNode ? titleOf(bindingNode) : "已删除的节点"}」，再次点击解除绑定。文件可在多个节点重复使用。` : `点击素材新建「${nodeRoles[assetNodeRole].label}」节点，或选择已有节点进行绑定。`}</p>
+              {filteredAssets.length ? (
                 <div className="dock-assets">
-                  {project.assets.map((a) => (
+                  {filteredAssets.map((a) => (
                     <button
                       key={a.id}
-                      onClick={() => addNode("asset", a)}
-                      title={`将 ${a.name} 加入画布`}
+                      className={clsx(assetTarget && assetIdsOf(nodes.find((node) => node.id === assetTarget)?.data || {}).includes(a.id) && "bound")}
+                      onClick={() => {
+                        if (!assetTarget) { addNode(assetNodeRole, a); return; }
+                        const target = nodesRef.current.find((node) => node.id === assetTarget);
+                        if (!target) { notify("绑定目标已删除，请重新选择节点"); return; }
+                        const ids = assetIdsOf(target.data), bound = ids.includes(a.id);
+                        if (!bound && ids.length >= 20) { notify("每个素材节点最多绑定 20 个文件"); return; }
+                        editNode(target.id, { assetIds: bound ? ids.filter((id) => id !== a.id) : [...ids, a.id], assetId: undefined });
+                      }}
+                      title={assetTarget ? `绑定或解除 ${a.name}` : `用 ${a.name} 新建${nodeRoles[assetNodeRole].label}`}
                     >
                       {a.mimeType.startsWith("image/") ? (
                         <img src={a.url} alt={a.name} />
@@ -3186,14 +3298,14 @@ function Studio({
                       )}
                       <span>{a.name}</span>
                       <i>
-                        <Plus size={12} />
+                        {assetTarget && assetIdsOf(nodes.find((node) => node.id === assetTarget)?.data || {}).includes(a.id) ? <Check size={12} /> : <Plus size={12} />}
                       </i>
                     </button>
                   ))}
                 </div>
               ) : (
                 <div className="dock-empty">
-                  上传你的参考素材，点击即可加入画布。
+                  {project.assets.length ? "没有匹配的素材，请调整搜索或文件类型。" : "上传参考图片、音频或文档，再绑定到人物、场景和道具节点。"}
                 </div>
               )}
             </div>
@@ -3246,7 +3358,8 @@ function Studio({
                         key={s}
                         onClick={() => {
                           setPrompt(s);
-                          if (i > 0 && activeVersion) setMode("iterate");
+                          setPromptMentions([]);
+                          if (i > 0 && outputNode?.data.versionId) setMode("iterate");
                         }}
                       >
                         <span>
@@ -3328,7 +3441,7 @@ function Studio({
                   <div>
                     <strong>这次生成未完成</strong>
                     <p>{latestJob.error || "请检查连接后重试"}</p>
-                    <button onClick={() => setPrompt(latestJob.prompt)}>
+                    <button onClick={() => { setPrompt(latestJob.prompt); setPromptMentions((latestJob as Job & { mentions?: MentionToken[] }).mentions || []); }}>
                       <RotateCcw size={13} />
                       载入提示词重试
                     </button>
@@ -3407,22 +3520,23 @@ function Studio({
                   </button>
                 </div>
               )}
-              <textarea
+              {gameNodes.length > 1 && <label className="director-output-target"><span>生成目标</span><select aria-label="生成目标" value={outputNode?.id || ""} onChange={(event) => {
+                const id = event.target.value;
+                setSettings((current) => ({ ...current, outputNodeId: id }));
+                setNodes((current) => current.map((node) => ({ ...node, selected: node.id === id })));
+              }}><option value="" disabled>请选择游戏节点</option>{gameNodes.map((node) => <option key={node.id} value={node.id}>{titleOf(node)} · 节点 {nodes.findIndex((candidate) => candidate.id === node.id) + 1}</option>)}</select></label>}
+              <MentionInput
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                mentions={promptMentions}
+                nodes={nodes}
+                onChange={(value, mentions) => { setPrompt(value); setPromptMentions(mentions); }}
                 placeholder={
                   mode === "iterate"
                     ? "描述你希望如何修改当前游戏…"
                     : "描述你想创造的游戏，或 @ 引用画布节点…"
                 }
-                aria-label="AI 导演提示词"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    void generate();
-                  }
-                  if (e.key === "@") setRefsOpen(true);
-                }}
+                ariaLabel="AI 导演提示词"
+                onSubmit={() => void generate()}
               />
               <div className="compose-options">
                 <select
@@ -3433,8 +3547,8 @@ function Studio({
                   }
                 >
                   <option value="generate">✦ 生成游戏</option>
-                  <option value="iterate" disabled={!activeVersion}>
-                    ↻ 迭代当前版本
+                  <option value="iterate" disabled={!outputNode?.data.versionId}>
+                    ↻ 迭代目标版本
                   </option>
                 </select>
                 <select
