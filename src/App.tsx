@@ -26,7 +26,6 @@ import {
   Plus,
   Home,
   FolderOpen,
-  Images,
   Blocks,
   Settings2,
   ChevronDown,
@@ -35,9 +34,7 @@ import {
   ArrowLeft,
   Search,
   MoreHorizontal,
-  Gamepad2,
-  Sparkles,
-  Zap,
+  Cpu,
   Check,
   X,
   Menu,
@@ -51,21 +48,16 @@ import {
   Minimize2,
   RefreshCw,
   Code2,
-  History,
   PanelRightClose,
   PanelRightOpen,
   Loader2,
   Send,
   Square,
-  FileText,
   ImagePlus,
-  Network,
   LayoutGrid,
-  MousePointer2,
   ZoomIn,
   ZoomOut,
   Scan,
-  WandSparkles,
   Link2,
   Upload,
   CheckCircle2,
@@ -74,12 +66,10 @@ import {
   ExternalLink,
   Volume2,
   Box,
-  Trophy,
-  Rocket,
   Puzzle,
-  Swords,
-  CircleDot,
-  Mountain,
+  Route,
+  Crosshair,
+  Grid3X3,
   HelpCircle,
   Grip,
   Save,
@@ -91,14 +81,12 @@ import {
   Keyboard,
   BookOpen,
   AtSign,
-  UserRound,
-  Trees,
-  Music2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import clsx from "clsx";
 import { api, request } from "./api";
 import { MentionInput } from "./components/MentionInput";
+import { ArrangeIcon, AssetLibraryIcon, AudioIcon, CharacterIcon, CursorIcon, DirectorIcon, GameCanvasIcon, HistoryIcon, SceneIcon, TextNodeIcon, WorkflowIcon, PropIcon } from "./components/StudioIcons";
 import { insertMention, referencedNodeIds } from "./mentions";
 import type { MentionToken } from "./mentions";
 import type {
@@ -183,16 +171,11 @@ const phaseNames: Record<string, string> = {
   failed: "生成失败",
   cancelled: "已取消",
 };
-const icons: LucideIcon[] = [
-  Rocket,
-  Mountain,
-  Puzzle,
-  CircleDot,
-  Swords,
-  Trophy,
-  Box,
-  Gamepad2,
-];
+const genreIcons: Record<string, LucideIcon> = {
+  arcade: GameCanvasIcon, runner: Route, platformer: Route,
+  shooter: Crosshair, puzzle: Puzzle, rpg: SceneIcon,
+  simulation: Grid3X3, strategy: WorkflowIcon, breakout: GameCanvasIcon,
+};
 function IconButton({
   icon: Icon,
   label,
@@ -214,7 +197,7 @@ function IconButton({
       onClick={onClick}
       disabled={disabled}
     >
-      <Icon size={17} />
+      <Icon size={18} />
     </button>
   );
 }
@@ -836,8 +819,8 @@ export default function App() {
           新建项目<kbd>⌘ N</kbd>
         </button>
         <button className="agent-link" onClick={() => setNewModal(true)}>
-          <Sparkles size={17} />
-          GameStudio Agent<span className="tiny-badge">AI</span>
+          <DirectorIcon size={17} />
+          创作画布
         </button>
         <div className="sidebar-rule" />
         <nav>
@@ -845,9 +828,9 @@ export default function App() {
             [
               { id: "home", label: "首页", icon: Home },
               { id: "projects", label: "项目", icon: FolderOpen },
-              { id: "assets", label: "资产", icon: Images },
+              { id: "assets", label: "资产", icon: AssetLibraryIcon },
               { id: "templates", label: "工作流模板", icon: Blocks },
-              { id: "history", label: "生成记录", icon: History },
+              { id: "history", label: "生成记录", icon: HistoryIcon },
             ] as { id: Page; label: string; icon: LucideIcon }[]
           ).map(({ id, label, icon: Icon }) => (
             <button
@@ -958,7 +941,7 @@ export default function App() {
                 : "检查模型连接"}
             </span>
             <span className="model-pill">
-              <Zap size={13} />
+              <Cpu size={13} />
               gpt-6.1-sol
             </span>
             <div className="avatar small">G</div>
@@ -1070,7 +1053,7 @@ function HomePage({
         <strong>新建画布创作</strong>
         <span>从一个灵感，开始一款游戏</span>
         <div className="canvas-corner">
-          <Network size={16} />
+          <WorkflowIcon size={16} />
           无限画布 · AI 协作
         </div>
       </button>
@@ -1080,8 +1063,8 @@ function HomePage({
           { "--tool-count": Math.min(8, templates.length) } as CSSProperties
         }
       >
-        {templates.slice(0, 8).map((t, i) => {
-          const Icon = icons[i % icons.length];
+        {templates.slice(0, 8).map((t) => {
+          const Icon = genreIcons[t.genre || ""] || GameCanvasIcon;
           return (
             <button key={t.id} onClick={() => void create(t)}>
               <span>
@@ -1170,7 +1153,7 @@ function HomePage({
                     <Play size={21} fill="currentColor" />
                   </div>
                   <span className="showcase-badge">
-                    <Gamepad2 size={11} />
+                    <GameCanvasIcon size={11} />
                     可玩示例
                   </span>
                 </div>
@@ -1222,15 +1205,15 @@ function HomePage({
           >
             <div className="workflow-art">
               <span>
-                <FileText size={20} />
+                <TextNodeIcon size={20} />
               </span>
               <i />
               <span>
-                <Sparkles size={20} />
+                <DirectorIcon size={20} />
               </span>
               <i />
               <span className="final">
-                <Gamepad2 size={22} />
+                <GameCanvasIcon size={22} />
               </span>
               <small>0{i + 1}</small>
             </div>
@@ -1298,7 +1281,7 @@ function ProjectCard({
                       ["trash", "移入回收站", Trash2],
                     ]
                   : [
-                      ["rename", "重命名", FileText],
+                      ["rename", "重命名", TextNodeIcon],
                       ["clone", "创建副本", Copy],
                       ["archive", "归档项目", Archive],
                       ["trash", "移入回收站", Trash2],
@@ -1505,17 +1488,17 @@ function TemplatesPage({
               <p className="muted">{selected.description}</p>
               <div className="workflow-steps">
                 <span>
-                  <FileText size={17} />
+                  <TextNodeIcon size={17} />
                   需求与玩法
                 </span>
                 <ChevronRight size={15} />
                 <span>
-                  <Sparkles size={17} />
+                  <DirectorIcon size={17} />
                   Codex 生成
                 </span>
                 <ChevronRight size={15} />
                 <span>
-                  <Gamepad2 size={17} />
+                  <GameCanvasIcon size={17} />
                   试玩与迭代
                 </span>
               </div>
@@ -1652,7 +1635,7 @@ function AssetsPage({
                 ) : a.mimeType.startsWith("video/") ? (
                   <Play size={35} />
                 ) : (
-                  <FileText size={35} />
+                  <TextNodeIcon size={35} />
                 )}
               </button>
               <strong>{a.name}</strong>
@@ -1686,7 +1669,7 @@ function AssetsPage({
         </div>
       ) : (
         <Empty
-          icon={Images}
+          icon={AssetLibraryIcon}
           title={query ? "没有匹配的素材" : "为创作加入参考素材"}
           description="选择一个项目，再上传图片、音频或文本文件。在画布里通过 @ 引用它们。"
         />
@@ -1815,7 +1798,7 @@ function HistoryPage({
         </div>
       ) : (
         <Empty
-          icon={History}
+          icon={HistoryIcon}
           title="还没有生成记录"
           description="在项目的 AI 导演里提交想法后，会在这里看到完整进度。"
         />
@@ -2031,19 +2014,19 @@ function GuidePage({ onNew }: { onNew: () => void }) {
       <div className="guide-grid">
         {[
           {
-            icon: FileText,
+            icon: TextNodeIcon,
             n: "01",
             title: "把玩法说清楚",
             text: "在需求节点写下游戏类型、操作方式、目标与视觉风格。参考图片也可以上传并加入画布。",
           },
           {
-            icon: Sparkles,
+            icon: DirectorIcon,
             n: "02",
             title: "交给 AI 导演",
             text: "输入创作要求，通过 @ 引用节点。Codex CLI 调用 gpt-6.1-sol 生成完整 HTML5 游戏，并将作品保存到本机。进度与日志实时显示。",
           },
           {
-            icon: Gamepad2,
+            icon: GameCanvasIcon,
             n: "03",
             title: "试玩，再做得更好",
             text: "打开游戏预览，直接体验。描述你想修改的部分，每次迭代都保留独立版本，随时回到之前的作品。",
@@ -2113,30 +2096,30 @@ const NodeContext = createContext<NodeActions>({
 });
 const materialTypes = ["character", "scene", "prop", "audio"];
 const nodeRoles: Record<string, { label: string; icon: LucideIcon; hint: string; fields?: { key: string; label: string; placeholder: string }[] }> = {
-  brief: { label: "创作需求", icon: FileText, hint: "玩法、操作、目标与画面风格" },
-  character: { label: "人物素材", icon: UserRound, hint: "人物外观、性格与游戏能力", fields: [
+  brief: { label: "创作需求", icon: TextNodeIcon, hint: "玩法、操作、目标与画面风格" },
+  character: { label: "人物素材", icon: CharacterIcon, hint: "人物外观、性格与游戏能力", fields: [
     { key: "appearance", label: "外观设定", placeholder: "服装、颜色、比例和动画风格" },
     { key: "personality", label: "性格与行为", placeholder: "角色性格、移动与行为特点" },
     { key: "abilities", label: "角色能力", placeholder: "操作、技能、数值与限制" },
   ] },
-  scene: { label: "场景素材", icon: Trees, hint: "环境、布局与镜头视角", fields: [
+  scene: { label: "场景素材", icon: SceneIcon, hint: "环境、布局与镜头视角", fields: [
     { key: "environment", label: "环境氛围", placeholder: "地形、光照、色彩与世界设定" },
     { key: "layout", label: "关卡布局", placeholder: "路径、平台、障碍与出生点" },
     { key: "camera", label: "镜头视角", placeholder: "侧视 / 俯视、跟随与缩放" },
   ] },
-  prop: { label: "道具素材", icon: Box, hint: "道具用途、交互与规则", fields: [
+  prop: { label: "道具素材", icon: PropIcon, hint: "道具用途、交互与规则", fields: [
     { key: "usage", label: "道具用途", placeholder: "道具类型、外观与用途" },
     { key: "interaction", label: "交互方式", placeholder: "拾取、使用、碰撞与效果" },
     { key: "rules", label: "生效规则", placeholder: "数量、持续时间、冷却与得分" },
   ] },
-  audio: { label: "音频素材", icon: Music2, hint: "配乐、音效与触发时机", fields: [
+  audio: { label: "音频素材", icon: AudioIcon, hint: "配乐、音效与触发时机", fields: [
     { key: "mood", label: "声音氛围", placeholder: "节奏、情绪与音乐风格" },
     { key: "trigger", label: "触发时机", placeholder: "背景循环、跳跃、拾取与结束" },
     { key: "mixing", label: "播放规则", placeholder: "音量、循环、淡入淡出与静音" },
   ] },
-  asset: { label: "参考素材", icon: Images, hint: "图片、音频或文档参考" },
-  text: { label: "文本笔记", icon: FileText, hint: "灵感、剧情与修改说明" },
-  game: { label: "游戏生成", icon: Gamepad2, hint: "整合上游素材，生成可玩游戏" },
+  asset: { label: "参考素材", icon: AssetLibraryIcon, hint: "图片、音频或文档参考" },
+  text: { label: "文本笔记", icon: TextNodeIcon, hint: "灵感、剧情与修改说明" },
+  game: { label: "游戏生成", icon: GameCanvasIcon, hint: "整合上游素材，生成可玩游戏" },
 };
 const assetIdsOf = (data: GameNode["data"]) => Array.from(new Set([
   ...(Array.isArray(data.assetIds) ? data.assetIds : []),
@@ -2146,7 +2129,7 @@ const titleOf = (node: GameNode) => String(node.data.label || node.data.title ||
 function AssetMedia({ asset }: { asset: Asset }) {
   if (asset.mimeType.startsWith("image/")) return <img src={asset.url} alt={asset.name} />;
   if (asset.mimeType.startsWith("audio/")) return <div className="material-audio"><Volume2 size={22} /><audio className="nodrag nowheel" controls preload="metadata" src={asset.url} /></div>;
-  return <div className="material-document"><FileText size={23} /><a className="nodrag" href={asset.url} target="_blank" rel="noreferrer">{asset.name}<ExternalLink size={11} /></a></div>;
+  return <div className="material-document"><TextNodeIcon size={23} /><a className="nodrag" href={asset.url} target="_blank" rel="noreferrer">{asset.name}<ExternalLink size={11} /></a></div>;
 }
 function NodeAssets({ id, data, role }: { id: string; data: GameNode["data"]; role: string }) {
   const actions = useContext(NodeContext), ids = assetIdsOf(data), bound = actions.assets.filter((asset) => ids.includes(asset.id));
@@ -2249,7 +2232,7 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
                 title={String(data.label || data.title || "游戏")}
               />
             ) : (
-              <Cover genre={actions.genre} />
+              <div className="game-empty-preview" aria-hidden="true" />
             )}
             {data.status === "running" || data.status === "queued" ? (
               <div className="node-generating">
@@ -2265,8 +2248,8 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
               </div>
             ) : (
               <div className="node-await">
-                <Gamepad2 size={28} />
-                <span>等待你的创意</span>
+                <GameCanvasIcon size={28} />
+                <span>等待生成</span>
               </div>
             )}
           </button>
@@ -2279,7 +2262,7 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
             </span>
             <span>HTML5</span>
           </div>
-          {inputs.length > 0 && <div className="game-context"><span><Network size={11} />制作输入 · {inputs.length} 个节点</span><div>{inputs.map((input) => { const InputIcon = nodeRoles[input.type || "text"]?.icon || FileText; return <span key={input.id} title={`${titleOf(input)} · ${nodeRoles[input.type || "text"]?.label || "创作节点"}`}><InputIcon size={10} />{titleOf(input)}</span>; })}</div></div>}
+          {inputs.length > 0 && <div className="game-context"><span><WorkflowIcon size={11} />制作输入 · {inputs.length} 个节点</span><div>{inputs.map((input) => { const InputIcon = nodeRoles[input.type || "text"]?.icon || TextNodeIcon; return <span key={input.id} title={`${titleOf(input)} · ${nodeRoles[input.type || "text"]?.label || "创作节点"}`}><InputIcon size={10} />{titleOf(input)}</span>; })}</div></div>}
           {data.error && <p className="node-error">{String(data.error)}</p>}
           {data.summary && (
             <p className="node-summary">{String(data.summary)}</p>
@@ -2911,7 +2894,7 @@ function Studio({
             className={view === "canvas" ? "active" : ""}
             onClick={() => setView("canvas")}
           >
-            <Network size={15} />
+            <WorkflowIcon size={15} />
             工作流
           </button>
           <button
@@ -2924,7 +2907,7 @@ function Studio({
         </div>
         <div className="studio-header-right">
           <span className="model-pill">
-            <Zap size={12} />
+            <Cpu size={12} />
             gpt-6.1-sol
           </span>
           <button
@@ -2933,7 +2916,7 @@ function Studio({
             title="游戏版本"
             onClick={() => setVersionsOpen((v) => !v)}
           >
-            <History size={15} />
+            <HistoryIcon size={15} />
             <span>版本</span>
             <span className="count-badge">{project.versions.length}</span>
           </button>
@@ -3097,13 +3080,13 @@ function Studio({
                             )}
                           />
                         ) : (
-                          <Cover genre={String(settings.genre || "arcade")} />
+                          <div className="game-empty-preview" aria-hidden="true" />
                         )}
                         <span>
                           {n.data.versionId ? (
                             <Play size={17} />
                           ) : (
-                            <Gamepad2 size={17} />
+                            <GameCanvasIcon size={17} />
                           )}
                           {n.data.versionId ? "试玩游戏" : "等待生成"}
                         </span>
@@ -3150,7 +3133,7 @@ function Studio({
               {addOpen && (
                 <div className="add-node-menu">
                   <strong>添加到画布</strong>
-                  <button className="add-workflow" onClick={insertWorkflow}><Network size={18} /><div>游戏制作工作流<small>需求 + 人物 + 场景 + 道具 + 音频 + 游戏</small></div></button>
+                  <button className="add-workflow" onClick={insertWorkflow}><WorkflowIcon size={18} /><div>游戏制作工作流<small>需求 + 人物 + 场景 + 道具 + 音频 + 游戏</small></div></button>
                   {Object.entries(nodeRoles).filter(([type]) => type !== "asset").map(([type, { icon: Icon, label, hint }]) => (
                     <button key={type} onClick={() => addNode(type)}>
                       <Icon size={18} />
@@ -3176,16 +3159,16 @@ function Studio({
               )}
             </div>
             <IconButton
-              icon={MousePointer2}
+              icon={CursorIcon}
               label="选择工具 · 拖动节点，拖动空白平移"
               onClick={() =>
                 notify("点击节点选择，拖动节点移动；拖动空白区域平移画布")
               }
             />
-            <IconButton icon={WandSparkles} label="整理节点" onClick={tidy} />
+            <IconButton icon={ArrangeIcon} label="整理节点" onClick={tidy} />
             <span className="tool-divider" />
             <IconButton
-              icon={Images}
+              icon={AssetLibraryIcon}
               label="项目资产"
               onClick={() => setAssetsOpen((v) => !v)}
             />
@@ -3205,7 +3188,7 @@ function Studio({
           </div>
           <div className="canvas-bottom-bar">
             <button onClick={() => setAssetsOpen((v) => !v)}>
-              <Images size={15} />
+              <AssetLibraryIcon size={15} />
               资产管理<span>{project.assets.length}</span>
             </button>
             <div className="canvas-zoom">
@@ -3243,7 +3226,7 @@ function Studio({
             <div className="asset-dock">
               <header>
                 <strong>
-                  <Images size={16} />
+                  <AssetLibraryIcon size={16} />
                   项目资产 <span>{project.assets.length}</span>
                 </strong>
                 <div>
@@ -3294,7 +3277,7 @@ function Studio({
                       ) : a.mimeType.startsWith("audio/") ? (
                         <Volume2 size={23} />
                       ) : (
-                        <FileText size={23} />
+                        <TextNodeIcon size={23} />
                       )}
                       <span>{a.name}</span>
                       <i>
@@ -3324,10 +3307,10 @@ function Studio({
             <header className="director-header">
               <div>
                 <span className="director-orb">
-                  <Sparkles size={18} />
+                  <DirectorIcon size={18} />
                 </span>
                 <strong>
-                  AI 导演<span>把想法变成可玩的世界</span>
+                  AI 导演<span>素材 · 生成 · 迭代</span>
                 </strong>
               </div>
               <IconButton
@@ -3339,14 +3322,11 @@ function Studio({
             <div className="director-chat">
               {!project.messages.length ? (
                 <div className="director-welcome">
-                  <span className="welcome-orb">
-                    <Sparkles size={27} />
-                  </span>
-                  <h2>今天，想创造什么？</h2>
+                  <h2>从素材开始创作</h2>
                   <p>
-                    告诉我你的游戏创意。
+                    填写玩法和素材要求，
                     <br />
-                    我会帮你把玩法、画面和交互一一实现。
+                    或用 @ 引用画布节点。
                   </p>
                   <div className="suggestion-buttons">
                     {[
@@ -3363,11 +3343,11 @@ function Studio({
                         }}
                       >
                         <span>
-                          {[Rocket, Settings2, Monitor].map((Icon, j) =>
+                          {[GameCanvasIcon, Settings2, Monitor].map((Icon, j) =>
                             i === j ? <Icon key={j} size={15} /> : null,
                           )}
                         </span>
-                        {["来一款太空冒险", "打磨游戏体验", "让手机也能玩"][i]}
+                        {["太空射击游戏", "调整玩法与难度", "适配触屏操作"][i]}
                         <ArrowUpRight size={13} />
                       </button>
                     ))}
@@ -3378,7 +3358,7 @@ function Studio({
                   <div className={clsx("chat-message", m.role)} key={m.id}>
                     {m.role === "assistant" && (
                       <span className="message-avatar">
-                        <Sparkles size={13} />
+                        <DirectorIcon size={13} />
                       </span>
                     )}
                     <div>
@@ -3499,11 +3479,11 @@ function Studio({
                           {refs.includes(n.id) && <Check size={11} />}
                         </span>
                         {n.type === "game" ? (
-                          <Gamepad2 size={14} />
+                          <GameCanvasIcon size={14} />
                         ) : n.type === "asset" ? (
-                          <Images size={14} />
+                          <AssetLibraryIcon size={14} />
                         ) : (
-                          <FileText size={14} />
+                          <TextNodeIcon size={14} />
                         )}
                         <span>{String(n.data.label || n.data.title)}</span>
                       </button>
@@ -3546,7 +3526,7 @@ function Studio({
                     setMode(e.target.value as "generate" | "iterate")
                   }
                 >
-                  <option value="generate">✦ 生成游戏</option>
+                  <option value="generate">生成游戏</option>
                   <option value="iterate" disabled={!outputNode?.data.versionId}>
                     ↻ 迭代目标版本
                   </option>
@@ -3638,7 +3618,7 @@ function Studio({
         <div className="versions-panel">
           <header>
             <h3>
-              <History size={17} />
+              <HistoryIcon size={17} />
               游戏版本
             </h3>
             <IconButton
@@ -3694,7 +3674,7 @@ function Studio({
             </div>
           ) : (
             <Empty
-              icon={History}
+              icon={HistoryIcon}
               title="还没有游戏版本"
               description="每次生成与迭代都会自动保留版本。"
             />
@@ -3854,7 +3834,7 @@ function PreviewModal({
           />
         ) : (
           <Empty
-            icon={Gamepad2}
+            icon={GameCanvasIcon}
             title="游戏还没有生成"
             description="在 AI 导演中开始创作，完成后即可试玩。"
           />

@@ -3,6 +3,12 @@ import type { KeyboardEvent } from 'react';
 import { filterMentionCandidates, getMentionTrigger, insertMention, materialLabels, mentionName, mentionSummary, removeMention, validMentions, updateMentions as updateTokens } from '../mentions';
 import type { MentionCandidate, MentionToken } from '../mentions';
 import '../mention.css';
+import { iconForNodeType } from './StudioIcons';
+
+function MentionRoleIcon({type}:{type?:string}) {
+  const Icon=iconForNodeType(type);
+  return <Icon size={16} />;
+}
 
 type Props = {
   value: string; mentions: MentionToken[]; nodes: MentionCandidate[];
@@ -55,7 +61,7 @@ export function MentionInput({value,mentions=[],nodes,onChange,ariaLabel,placeho
       <div className="mention-menu-title">引用工作流素材 <span>↑↓ 选择 · Enter 插入</span></div>
       {candidates.length?candidates.map((n,i)=><button type="button" id={`${listId}-${i}`} key={n.id} role="option" aria-selected={active===i} data-node-id={n.id}
         className={active===i?'active':''} onMouseEnter={()=>setActive(i)} onClick={()=>select(n)}>
-        <span className={`mention-role-icon ${n.type || 'text'}`}>@</span><span className="mention-option-copy"><strong>{mentionName(n)}</strong><small>{mentionSummary(n).slice(0,45)}</small></span>
+        <span className={`mention-role-icon ${n.type || 'text'}`}><MentionRoleIcon type={n.type} /></span><span className="mention-option-copy"><strong>{mentionName(n)}</strong><small>{mentionSummary(n).slice(0,45)}</small></span>
         <span className="mention-kind">{materialLabels[n.type || ''] || '节点'}<small>节点 {nodes.findIndex(x=>x.id===n.id)+1}</small></span>
       </button>):<p className="mention-no-results">没有匹配素材。可先添加人物、场景或其他节点。</p>}
     </div>}
