@@ -35,6 +35,7 @@ import {
   Search,
   MoreHorizontal,
   Cpu,
+  CreditCard,
   Check,
   X,
   Menu,
@@ -84,7 +85,11 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import clsx from "clsx";
-import { api, request } from "./api";
+import { api, request, resetSessionRequests, sessionRequestEpoch } from "./api";
+import { getSession, updateProfile, publishAuthChange } from "./auth-api";
+import type { AuthSession, User } from "./auth-api";
+import { LoginPage, AccountPage } from "./components/AccountPages";
+import { BillingPage } from "./components/BillingPage";
 import { MentionInput } from "./components/MentionInput";
 import { MaterialCover } from "./components/MaterialCover";
 import { boundAssetIds, buildAssetCatalog, filterAssetCatalog, materialCategories, materialCategoryLabels } from "./materials";
@@ -112,10 +117,13 @@ type Page =
   | "templates"
   | "history"
   | "settings"
-  | "guide";
+  | "guide"
+  | "login"
+  | "account"
+  | "billing";
 type Route = { page: Page; projectId?: string };
 const parseRoute = (): Route => {
-  const [page, id] = window.location.hash.slice(1).split("/");
+  const [page, id] = window.location.hash.slice(1).split("?")[0].split("/");
   return page === "studio" && id
     ? { page: "home", projectId: id }
     : {
@@ -127,6 +135,9 @@ const parseRoute = (): Route => {
           "history",
           "settings",
           "guide",
+          "login",
+          "account",
+          "billing",
         ].includes(page)
           ? page
           : "home") as Page,
@@ -405,7 +416,10 @@ function Cover({
 }
 
 export default function App() {
-  const { language } = useLanguage();
+  const { language, setLanguage } = useLanguage();
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const reloadVersion = useRef(0), activeOwner = useRef<string | null | undefined>(undefined);
+  const [ownerRevision, setOwnerRevision] = useState(0);
   const [route, setRoute] = useState<Route>(parseRoute),
     [data, setData] = useState<Bootstrap>({
       projects: [],
@@ -446,23 +460,93 @@ export default function App() {
     setMobileNav(false);
   }, []);
   const reload = useCallback(async () => {
+    const version = ++reloadVersion.current;
     setError("");
     try {
-      const [boot, h] = await Promise.all([api.bootstrap(), api.health()]);
-      setData(boot);
-      setHealth(h);
+      const auth = await getSession();
+      if (version !== reloadVersion.current) return;
+      const owner = auth.user?.id || null;
+      if (activeOwner.current !== undefined && activeOwner.current !== owner) {
+        resetSessionRequests(auth.csrfToken); setOwnerRevision(value => value + 1);
+        setPreview(undefined); setNewModal(false); setRename(undefined); setConfirm(undefined); setNewName(""); setToast("");
+        setData({ projects: [], templates: [], settings: {}, jobs: [] });
+      }
+      activeOwner.current = owner;
+      if (auth.user) setLanguage(auth.user.language);
+      setSession(auth);
+      const [publicBoot, privateBoot, runtime] = await Promise.all([
+        request<Bootstrap>("/api/public/bootstrap"),
+        auth.mode === "local" || auth.user ? api.bootstrap() : Promise.resolve<Bootstrap>({ projects: [], templates: [], settings: {}, jobs: [] }),
+        api.health(),
+      ]);
+      if (version !== reloadVersion.current) return;
+      const projects = new Map(privateBoot.projects.map((project) => [project.id, project]));
+      for (const project of publicBoot.projects) projects.set(project.id, project);
+      setData({ ...publicBoot, ...privateBoot, templates: publicBoot.templates, projects: [...projects.values()], jobs: privateBoot.jobs || [] });
+      setHealth({ ...runtime, codex: runtime.codex || { available: false, authenticated: false } });
     } catch (e) {
-      setError((e as Error).message);
+      if (version === reloadVersion.current && (e as Error).name !== "AbortError") setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (version === reloadVersion.current) setLoading(false);
     }
   }, []);
+  const needsSignIn = session?.mode === "production" && !session.user;
+  const requireSignIn = () => {
+    if (!needsSignIn) return false;
+    navigate("login"); notify(t("Sign in to create a project.")); return true;
+  };
+  const openNewProject = () => { if (!requireSignIn()) setNewModal(true); };
+  const signedIn = async (auth: AuthSession) => {
+    setSession(auth); setLoading(true); setData({ projects: [], templates: data.templates, settings: {}, jobs: [] });
+    await reload(); navigate("projects");
+  };
+  const signedOut = async () => {
+    reloadVersion.current++; resetSessionRequests(); setOwnerRevision(value => value + 1);
+    setRename(undefined); setConfirm(undefined); setNewName(""); setToast("");
+    setSession(null); setNewModal(false); setPreview(undefined); setData({ projects: [], templates: data.templates, settings: {}, jobs: [] });
+    await reload(); navigate("home");
+  };
+  const userChanged = (user: User) => setSession((current) => current?.user?.id === user.id ? { ...current, user } : current);
+  useEffect(() => {
+    const expired = () => {
+      if (!session?.user) return;
+      reloadVersion.current++; resetSessionRequests(); setOwnerRevision(value => value + 1);
+      setRename(undefined); setConfirm(undefined); setNewName(""); setNewModal(false);
+      setSession((current) => current ? { ...current, user: null } : null);
+      setData({ projects: [], templates: data.templates, settings: {}, jobs: [] }); setPreview(undefined);
+      navigate("login"); notify(t("Your session expired. Sign in again.")); void reload();
+    };
+    const otherTab = (event: StorageEvent) => {
+      if (event.key !== "gamestudio.auth.version") return;
+      reloadVersion.current++; resetSessionRequests(); setOwnerRevision(value => value + 1);
+      setSession(current => current ? { ...current, user: null } : null);
+      setPreview(undefined); setNewModal(false); setRename(undefined); setConfirm(undefined); setNewName(""); setToast("");
+      setData({ projects: [], templates: data.templates, settings: {}, jobs: [] }); setLoading(true); void reload();
+    };
+    const changed = (event: Event) => {
+      if (!session?.user) return;
+      const next = (event as CustomEvent).detail;
+      if (next === "en" || next === "zh") void updateProfile({ language: next }).then(userChanged).catch((error) => notify(error.message));
+    };
+    window.addEventListener("gamestudio:session-expired", expired);
+    window.addEventListener("gamestudio:language-change", changed);
+    window.addEventListener("storage", otherTab);
+    return () => { window.removeEventListener("gamestudio:session-expired", expired); window.removeEventListener("gamestudio:language-change", changed); window.removeEventListener("storage", otherTab); };
+  }, [session?.user?.id, data.templates, reload, navigate, notify]);
   useEffect(() => {
     void reload();
+    if (new URLSearchParams(window.location.search).get("authChanged") === "1") publishAuthChange();
     const listener = () => setRoute(parseRoute());
     window.addEventListener("hashchange", listener);
     return () => window.removeEventListener("hashchange", listener);
   }, [reload]);
+  useEffect(() => {
+    let canceled = false;
+    void request<Bootstrap>("/api/public/bootstrap").then((publicBoot) => {
+      if (!canceled) setData((current) => ({ ...current, templates: publicBoot.templates, projects: [...current.projects.filter(project => !project.demo), ...publicBoot.projects] }));
+    }).catch(() => {});
+    return () => { canceled = true; };
+  }, [language]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (
@@ -471,20 +555,23 @@ export default function App() {
         !route.projectId
       ) {
         e.preventDefault();
-        setNewModal(true);
+        openNewProject();
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [route.projectId]);
+  }, [route.projectId, session?.user?.id, session?.mode]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(""), 4200);
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
+    if (!session || (session.mode === "production" && !session.user)) return;
     const events = new EventSource("/api/events");
+    const ownerEpoch = sessionRequestEpoch();
     const receive = (event: MessageEvent) => {
+      if (ownerEpoch !== sessionRequestEpoch()) return;
       try {
         const update = JSON.parse(event.data);
         if (
@@ -516,9 +603,14 @@ export default function App() {
     };
     events.addEventListener("state", receive);
     return () => events.close();
-  }, [mergeProject]);
+  }, [mergeProject, session?.user?.id, session?.mode, ownerRevision]);
   const openProject = async (project: Project) => {
+    if (requireSignIn()) return;
     try {
+      if (project.demo) {
+        const copy = await request<Project>(`/api/library/${project.id}/clone`, { method: "POST" });
+        mergeProject(copy); navigate("home", copy.id); notify(t("Example copied. You can now customize it.")); return;
+      }
       const latest = await api.project(project.id);
       if (latest.status === "trashed") {
         notify(t("Restore this project before editing or playing it."));
@@ -535,6 +627,7 @@ export default function App() {
     }
   };
   const create = async (template?: Template) => {
+    if (requireSignIn()) return;
     if (projectCreationPending) return;
     projectCreationPending = true;
     setCreating(true);
@@ -625,7 +718,13 @@ export default function App() {
     onPreview: (project: Project) => setPreview({ project }),
     navigate,
   };
-  if (route.projectId && current?.status === "trashed")
+  const accountActions = <div className="account-nav">
+    <button className="button small" onClick={() => navigate("billing")}>{t("Membership")}</button>
+    <button className="button small" onClick={() => navigate(session?.user ? "account" : "login")}>{t(session?.user ? "Account" : "Sign in")}</button>
+  </div>;
+  const authGate = Boolean(needsSignIn && (route.projectId || ["projects", "assets", "history", "settings", "account"].includes(route.page)));
+  const loginPage = session ? <LoginPage session={session} onSignedIn={signedIn} notify={notify} onBack={() => navigate("home")} /> : <div className="loading-page"><Loader2 className="spin" size={24} />{t("Loading…")}</div>;
+  if (!authGate && route.projectId && current?.status === "trashed")
     return (
       <main className="unavailable-project">
         <Empty
@@ -646,7 +745,7 @@ export default function App() {
         {renderOverlays()}
       </main>
     );
-  if (route.projectId && current)
+  if (!authGate && route.projectId && current && !current.demo)
     return (
       <>
         <ReactFlowProvider>
@@ -655,6 +754,7 @@ export default function App() {
             project={current}
             jobs={(data.jobs || []).filter((j) => j.projectId === current.id)}
             health={health}
+            accountActions={accountActions}
             onBack={() => navigate("projects")}
             onProject={mergeProject}
             notify={notify}
@@ -762,13 +862,11 @@ export default function App() {
             onCustomize={
               preview.project.demo
                 ? async () => {
+                    if (requireSignIn()) { setPreview(undefined); return; }
                     if (projectCreationPending) return;
                     projectCreationPending = true;
                     try {
-                      const copy = await api.action(
-                        preview.project.id,
-                        "clone",
-                      );
+                      const copy = await request<Project>(`/api/library/${preview.project.id}/clone`, { method: "POST" });
                       mergeProject(copy);
                       setPreview(undefined);
                       navigate("home", copy.id);
@@ -798,11 +896,11 @@ export default function App() {
         </a>
         <button
           className="button primary new-project"
-          onClick={() => setNewModal(true)}
+          onClick={openNewProject}
         >
           <Plus size={18} />{t("New project")}<kbd>⌘ N</kbd>
         </button>
-        <button className="agent-link" onClick={() => setNewModal(true)}>
+        <button className="agent-link" onClick={openNewProject}>
           <DirectorIcon size={17} />{t("Creative canvas")}</button>
         <div className="sidebar-rule" />
         <nav>
@@ -813,6 +911,7 @@ export default function App() {
               { id: "assets", label: t("Assets"), icon: AssetLibraryIcon },
               { id: "templates", label: t("Workflows"), icon: Blocks },
               { id: "history", label: t("Generation history"), icon: HistoryIcon },
+              { id: "billing", label: t("Plans and billing"), icon: CreditCard },
             ] as { id: Page; label: string; icon: LucideIcon }[]
           ).map(({ id, label, icon: Icon }) => (
             <button
@@ -860,14 +959,14 @@ export default function App() {
               )}
             />
           </button>
-          <div className="local-profile">
-            <div className="avatar">G</div>
+          <button className="local-profile account-profile-link" onClick={() => navigate(session?.user ? "account" : "login")}>
+            <div className="avatar">{session?.user?.name.slice(0, 1).toUpperCase() || "G"}</div>
             <div>
-              <strong>{t("Creative workspace")}</strong>
-              <span>Codex CLI · gpt-6.1-sol</span>
+              <strong>{session?.user?.name || t(session?.mode === "local" ? "Local workspace" : "Guest")}</strong>
+              <span>{session?.user?.email || session?.user?.phone || t(session?.mode === "local" ? "Personal development mode" : "Sign in to save your work")}</span>
             </div>
             <Monitor size={15} />
-          </div>
+          </button>
         </div>
       </aside>
       {mobileNav && (
@@ -899,6 +998,9 @@ export default function App() {
                     history: t("Generation history"),
                     settings: t("Settings"),
                     guide: t("Getting started"),
+                    login: t("Sign in"),
+                    account: t("Account"),
+                    billing: t("Membership"),
                   } as Record<Page, string>
                 )[route.page]
               }
@@ -906,6 +1008,7 @@ export default function App() {
           </div>
           <div className="header-status">
             <LanguageSwitch />
+            {accountActions}
             <span
               className={clsx(
                 "connection-dot",
@@ -938,6 +1041,17 @@ export default function App() {
             <Loader2 size={30} className="spin" />
             <span>{t("Opening your workspace…")}</span>
           </div>
+        ) : authGate || route.page === "login" ? (
+          loginPage
+        ) : route.page === "account" ? (
+          session?.user ? <AccountPage session={session} onUserChange={userChanged} onSignedOut={signedOut} notify={notify} /> : loginPage
+        ) : route.page === "billing" ? (
+          <BillingPage session={session} onSignIn={() => navigate("login")} notify={notify} />
+        ) : route.projectId && current?.demo ? (
+          <div className="page"><Empty title={current.name} description={t("Examples are read-only. Create your own copy to edit this workflow.")}>
+            <button className="button" onClick={() => setPreview({project: current})}>{t("Play game")}</button>
+            <button className="button primary" onClick={() => void openProject(current)}>{t("Customize this game")}</button>
+          </Empty></div>
         ) : route.projectId && !current ? (
           <Empty
             title={t("Project not found")}
@@ -946,9 +1060,9 @@ export default function App() {
             <button className="button" onClick={() => navigate("projects")}>{t("Back to projects")}</button>
           </Empty>
         ) : route.page === "home" ? (
-          <HomePage {...context} onNew={() => setNewModal(true)} />
+          <HomePage {...context} onNew={openNewProject} />
         ) : route.page === "projects" ? (
-          <ProjectsPage {...context} onNew={() => setNewModal(true)} />
+          <ProjectsPage {...context} onNew={openNewProject} />
         ) : route.page === "templates" ? (
           <TemplatesPage
             templates={data.templates}
@@ -957,7 +1071,7 @@ export default function App() {
           />
         ) : route.page === "assets" ? (
           <AssetsPage
-            projects={data.projects}
+            projects={data.projects.filter((project) => !project.demo)}
             notify={notify}
             mergeProject={mergeProject}
             openProject={openProject}
@@ -971,6 +1085,7 @@ export default function App() {
           />
         ) : route.page === "settings" ? (
           <SettingsPage
+            localMode={session?.mode !== "production"}
             health={health}
             settings={data.settings}
             notify={notify}
@@ -980,7 +1095,7 @@ export default function App() {
             onSettings={(settings) => setData((d) => ({ ...d, settings }))}
           />
         ) : (
-          <GuidePage onNew={() => setNewModal(true)} />
+          <GuidePage onNew={openNewProject} />
         )}
       </main>
       {renderOverlays()}
@@ -1581,12 +1696,14 @@ function HistoryPage({
   );
 }
 function SettingsPage({
+  localMode = true,
   health,
   settings,
   notify,
   refresh,
   onSettings,
 }: {
+  localMode?: boolean;
   health?: Health;
   settings: Record<string, unknown>;
   notify: (s: string) => void;
@@ -1614,7 +1731,7 @@ function SettingsPage({
           <p>{t("Set up your preferred creative environment.")}</p>
         </div>
       </div>
-      <section className="settings-card">
+      {localMode && <section className="settings-card">
         <div className="settings-heading">
           <div className="settings-icon">
             <Terminal size={24} />
@@ -1675,7 +1792,7 @@ function SettingsPage({
           }}
         >
           <RefreshCw size={16} className={busy ? "spin" : ""} />{t("Check connection")}</button>
-      </section>
+      </section>}
       <section className="settings-card">
         <h2>{t("Default preferences")}</h2>
         <p className="muted">{t("New projects use these preferences. Each project can override them.")}</p>
@@ -2043,6 +2160,7 @@ function Studio({
   project,
   jobs,
   health,
+  accountActions,
   onBack,
   onProject,
   notify,
@@ -2052,6 +2170,7 @@ function Studio({
   project: Project;
   jobs: Job[];
   health?: Health;
+  accountActions?: ReactNode;
   onBack: () => void;
   onProject: (p: Project) => void;
   notify: (s: string) => void;
@@ -2625,6 +2744,7 @@ function Studio({
         </div>
         <div className="studio-header-right">
           <LanguageSwitch />
+          {accountActions}
           <span className="model-pill">
             <Cpu size={12} />
             gpt-6.1-sol

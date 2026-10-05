@@ -1,87 +1,60 @@
 # GameStudio
 
-参考 LibTV 的深色创作网站与节点工作台，用本机 Codex CLI 的 `gpt-6.1-sol` 生成可玩的浏览器游戏。项目、素材、工作流、生成日志和历史版本保存在本机；游戏可以预览、继续修改、编辑源码并导出。
+A dark material-based workspace for creating playable HTML5 games. Organize a brief, characters, scenes, props and audio; reference actual material covers with `@`; generate, playtest, iterate and export. The interface defaults to English and supports Chinese with a persistent language preference.
 
-## 运行
+The generation model is exactly **`gpt-6.1-sol`**, using the locked project-local Codex CLI **0.160.0**. Generated games are separate from the three clearly labeled built-in examples. Six prepared workflows contain authored English/Chinese material directions, game rules and acceptance checks.
 
-需要 Node.js 24 或更新版本，以及已经登录、可以访问 `gpt-6.1-sol` 的 Codex 账号。
+## Local development
 
-```sh
-cd /Users/amiao/Project/gamestudio
-npm install
-npm exec -- codex login status
-```
-
-如果没有登录：
+Use Node.js 24. Install locked dependencies and connect an account entitled to the required model:
 
 ```sh
+npm ci
 npm exec -- codex login
-```
-
-项目依赖包含 Codex CLI，后端优先使用项目内安装的版本。开发时运行：
-
-```sh
 npm run dev
 ```
 
-开发界面为 `http://127.0.0.1:5173`，API 为 `http://127.0.0.1:4100`。正式运行时先构建：
+The development frontend runs on `http://127.0.0.1:5173`; the API on `http://127.0.0.1:4100`. For a compiled local application:
 
 ```sh
 npm run build
 npm start
 ```
 
-然后打开 `http://127.0.0.1:4100`。服务默认只允许本机访问。
+Local mode preserves projects in ignored `data/` and binds to loopback. It is a personal development workspace; public multi-user hosting uses explicit production mode and separate tenant stores.
 
-macOS 也可以在 Finder 中双击 `scripts/start.command` 启动开发工作台，然后打开 `http://127.0.0.1:5173`。
+## Production deployment
 
-## 创作流程
+The repository includes non-root Docker images, an HTTPS reverse proxy, persistent data and credential volumes, provider configuration, production preflight and backup/restore instructions. Run one application instance; horizontal replication over the same SQLite/filesystem data is not supported.
 
-1. 从首页新建项目，或选择模板建立游戏需求。
-2. 在工作台分别设计玩法、人物素材、场景素材、道具素材和音频素材；填写对应的外观、能力、布局、交互和触发规则，绑定本地文件并连接到游戏节点。已有项目可以通过添加节点菜单补充完整游戏制作工作流。
-3. 在节点描述或 AI 导演输入框键入 `@`，从当前画布节点中选择引用。引用绑定节点 ID，可通过上下文带入人物、场景、道具、音频及其文件；同名节点按类型与 ID 区分。
-4. 在 AI 导演中提交需求。后端排队调用真实 Codex CLI；任务状态和日志会同步到页面。
-5. 生成完成后，在沙箱预览中试玩。修改需求后选择迭代，原版本会保留。
-6. 在版本历史中切换结果，或编辑源码保存一个新版本。
-7. 导出独立 HTML 或 ZIP，继续在浏览器运行。
+1. Copy [.env.production.example](.env.production.example) to `.env.production` and set the public domain, a random session secret and provider credentials.
+2. Register the exact Google redirect and payment webhook URLs. Configure Twilio Verify and/or Google, and Stripe recurring prices and/or Alipay prices. Each provider can be independently enabled.
+3. Provision a private Codex credential cache or an OpenAI API key with access to `gpt-6.1-sol`.
+4. Follow the preflight and deployment sequence in [Production deployment](docs/production-deployment.md).
 
-内置可玩项目明确标为示例；只有实际 CLI 成功且返回有效游戏代码后，任务才会显示生成成功。模型固定为 `gpt-6.1-sol`，不会在失败时静默切换模型。
+```sh
+npm run preflight:production
+# Then follow the documented model-access probe and Docker deployment steps.
+```
 
-项目含多个游戏结果时，在导演中选择“生成目标”。新增工作流会选中自己的新游戏节点；各节点使用各自的版本迭代。没有生成过的新结果须先生成，不能自动使用另一个游戏的源版本。
+Missing credentials produce a clear unavailable state; there are no fake login or payment modes. A redirect never activates membership. Verified provider settlement controls entitlements, and an atomic usage reservation controls generation admission. Stripe is recurring; Alipay membership is prepaid for the selected period.
 
-人物、场景、道具和音频节点承载设计要求与真实素材文件，不会单独调用图像或音频生成模型。Codex 读取文字/JSON 文档及附带的参考图，将适用图片、音频文件编入游戏，或按文字要求绘制 Canvas/CSS 图形。详细的引用、依赖和删除规则见 [素材工作流](docs/workflow.md)。
-
-## 配置与数据
-
-复制 `.env.example` 到 `.env` 可配置端口。生成参数与项目设置通过工作台保存；登录状态沿用本机 Codex CLI 的登录。
-
-| 环境变量 | 用途 |
-| --- | --- |
-| `PORT` | API/正式网站端口，默认 `4100` |
-| `GAMESTUDIO_DATA_DIR` | 本机数据目录，默认项目下的 `data/` |
-| `GAMESTUDIO_CODEX_BIN` | 可选 CLI 可执行文件路径；省略时使用项目内 Codex |
-| `GAMESTUDIO_JOB_TIMEOUT_MS` | 可选单次生成超时，单位毫秒 |
-
-备份时先停止服务，再复制整个 `data/`，包括状态文件、项目素材、版本源码和任务记录。不要只复制单独的状态 JSON。
-
-## 验证
+## Verification
 
 ```sh
 npm run check
-npm test
 npm run build
+npm test
 ```
 
-HTTP 集成测试使用临时数据目录和受控 CLI 夹具，覆盖传输、状态、文件与失败处理，不会调用真实模型或修改个人项目。真实模型与浏览器操作验收单独记录于 [验证记录](docs/verification.md)。
+The suite covers material covers/categories, curated workflows, language variants, real HTTP state changes, OAuth/SMS transport contracts, cookies/CSRF, tenant isolation, signed payment callbacks, duplicate/out-of-order/refund/cancellation cases, quota reservation/settlement, asynchronous account changes, restart recovery and production preflight. Third-party test fixtures do not constitute a live merchant or login-provider activation; activation checks after credentials are supplied are documented explicitly.
 
-服务运行后，可执行 `npm run test:live` 创建一个验收项目，实际调用模型完成初始生成和一次修改。证据保存于 `work/live-verification/`；浏览器中的玩法与界面仍需实测。使用其他 API 端口时设置 `GAMESTUDIO_TEST_ORIGIN`。
+- [Material catalog and workflow kits](docs/materials.md)
+- [Authentication and tenant isolation](docs/auth.md)
+- [Billing and memberships](docs/billing.md)
+- [Production deployment and operator activation](docs/production-deployment.md)
+- [Verification history](docs/verification.md)
 
-更多细节见 [素材工作流](docs/workflow.md)、[架构说明](docs/architecture.md) 与 [验收标准](docs/acceptance.md)。
+游戏工作台默认英文，支持中文切换。生产部署需要在配置模板中填写第三方凭据、域名和会话密钥，并按部署文档注册回调及执行预检。本机原有项目不会自动成为新用户的云端项目。
 
-## 故障处理
-
-CLI 不可用时检查项目安装是否完成，或设置正确的 `GAMESTUDIO_CODEX_BIN`。未登录时运行 `npm exec -- codex login`。模型访问失败时检查账号权限及 CLI 版本；不要将模型换成其他名称以掩盖错误。
-
-生成失败或取消后，已保存的项目与历史版本仍保留。修正需求或环境后提交新任务。重启中断的运行任务会显示中断原因，不会伪装为成功。
-
-游戏预览使用不授予同源访问权限的 iframe；导出是用户生成的可执行 HTML。网站采用本机单用户存储，并未实现公网多用户服务、计费或账户系统。
+The CI template is in [deploy/github-actions-ci.yml](deploy/github-actions-ci.yml). Install it under `.github/workflows/ci.yml` with a GitHub credential that has workflow-write permission; the current push credential does not have that scope. Local verification and Docker deployment do not depend on CI activation.

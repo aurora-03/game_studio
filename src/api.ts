@@ -1,4 +1,4 @@
-import { getLanguage, t } from "./locale";
+import { getLanguage, t } from "./locale.ts";
 import type { Node, Edge, Viewport } from "@xyflow/react";
 
 export type GameNode = Node<{
@@ -118,8 +118,15 @@ export type Bootstrap = {
 
 let csrfToken: string | null = null;
 export const setCsrfToken = (token: string | null) => { csrfToken = token; };
+let sessionScope = new AbortController(), sessionEpoch = 0;
+export const sessionRequestEpoch = () => sessionEpoch;
+export function resetSessionRequests(token: string | null = null) {
+  sessionScope.abort(); sessionScope = new AbortController(); sessionEpoch++; csrfToken = token;
+}
 export class RequestError extends Error {
-  constructor(message: string, readonly status: number, readonly code: string) { super(message); this.name = "RequestError"; }
+  readonly status: number;
+  readonly code: string;
+  constructor(message: string, status: number, code: string) { super(message); this.name = "RequestError"; this.status = status; this.code = code; }
 }
 const requestErrors: Record<string, string> = {
   INVALID_INPUT: "Please check your input.", AUTH_REQUIRED: "Please sign in to continue.",
@@ -132,12 +139,15 @@ export async function request<T>(
   url: string,
   options: RequestInit = {},
 ): Promise<T> {
+  const scope = sessionScope.signal;
   const headers = new Headers(options.headers);
   if (!headers.has("Accept-Language")) headers.set("Accept-Language", getLanguage() === "zh" ? "zh-CN" : "en");
   if (csrfToken && !["GET", "HEAD", "OPTIONS"].includes((options.method || "GET").toUpperCase())) headers.set("X-CSRF-Token", csrfToken);
   if (options.body && !(options.body instanceof FormData))
     headers.set("Content-Type", "application/json");
-  const response = await fetch(url, { credentials: "same-origin", ...options, headers });
+  const signal = options.signal ? AbortSignal.any([scope, options.signal]) : scope;
+  const response = await fetch(url, { credentials: "same-origin", ...options, headers, signal });
+  if (scope.aborted) throw new DOMException("Account changed", "AbortError");
   if (!response.ok) {
     let error = t("Request failed ({status})", {status: response.status}), code = "REQUEST_FAILED";
     try {
@@ -149,13 +159,16 @@ export async function request<T>(
         (typeof data.error === "string" ? data.error : undefined) ||
         error;
     } catch {}
+    if (scope.aborted) throw new DOMException("Account changed", "AbortError");
     if (/\p{Script=Han}/u.test(error)) error = t(requestErrors[code] || "This action is temporarily unavailable. Please retry.");
     else error = t(error);
     if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("gamestudio:session-expired"));
     throw new RequestError(error, response.status, code);
   }
   if (response.status === 204) return undefined as T;
-  return response.json();
+  const result = await response.json();
+  if (scope.aborted) throw new DOMException("Account changed", "AbortError");
+  return result;
 }
 export const api = {
   bootstrap: () => request<Bootstrap>("/api/bootstrap"),

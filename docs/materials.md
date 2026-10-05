@@ -30,3 +30,11 @@ The workflow library first shows the material kit. Clicking a material opens its
 ## Verification
 
 `node --test tests/materials/catalog.test.js tests/materials/templates.test.js` checks actual cover ordering and replacement, deleted/legacy bindings, same-name identity, cross-project isolation, category deduplication and combined search, six complete English/Chinese kits, real generation-context inclusion, localized creation, and preservation of supplied user graphs. These checks use actual data structures and do not claim that a fixture image is AI generated. Browser verification of the integrated production bundle is performed separately before publishing.
+
+## Published system example languages
+
+The three playable system examples (Neon Drift, Orbit Guard, and Color Memory) publish complete English and Chinese labels, metadata, and HTML sources. English is their default seed language. `server/demo-locales.js` provides response-only metadata localization and selection of a matching known HTML variant. It recognizes historical Chinese seed identifiers and source bytes so existing examples can switch language without replacing their saved IDs or files.
+
+`localizeDemoProject(project, language)` localizes only known canonical labels on a `demo: true` system project and its `source: 'demo'` versions. It returns a copy, preserving custom project names, descriptions, game labels, material designs, asset URLs, node positions, links, history, and non-demo versions. `builtInDemoHtml(project, version, language, originalHtml)` selects a locale variant only when the original is byte-identical to a published preset or historical source. Personal projects and edited/arbitrary game HTML are returned unchanged.
+
+The English and Chinese game scripts retain the same jump, keyboard/drag movement, pause, restart, pairing, mismatch-locking, and pending-timer behavior. `tests/materials/demo-locales.test.js` verifies the response copy and source guards, compiles both scripts, and executes their controls in a deterministic unit fixture. The fixture is not a browser or AI generation claim; integrated browser preview checks remain a separate verification step.

@@ -167,8 +167,8 @@ export class Store {
   seedDemo(demo) {
     const project = this.createProject({ name: demo.name, description: demo.description, templateId: demo.templateId, settings: { genre: demo.genre }, demo: true });
     project.theme = demo.theme; project.genre = demo.genre;
-    this.addVersion(project, { ...demo, source: 'demo', prompt: 'GameStudio 内置本地示例，未调用 AI 生成。' });
-    project.messages.push({ id: newId(), role: 'assistant', content: `这是一个本地可玩示例：${demo.summary} 可以先试玩，再通过 AI 导演修改玩法。`, createdAt: now() });
+    this.addVersion(project, { ...demo, source: 'demo', prompt: 'Built-in playable example. No AI generation was used.' });
+    project.messages.push({ id: newId(), role: 'assistant', content: `Built-in playable example: ${demo.summary} Play first, then customize the gameplay with the director.`, createdAt: now() });
   }
 
   cloneProject(original, sourceStore = this) {

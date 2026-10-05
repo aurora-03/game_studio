@@ -15,6 +15,7 @@ export function LanguageSwitch({ onChange }: { onChange?: (language: Language) =
     <Languages size={15} aria-hidden="true" />
     <select aria-label={t('Language')} value={language} onChange={(event) => {
       const next = event.target.value as Language; setLanguage(next); onChange?.(next);
+      window.dispatchEvent(new CustomEvent('gamestudio:language-change', { detail: next }));
     }}>
       <option value="en">English</option><option value="zh">简体中文</option>
     </select>

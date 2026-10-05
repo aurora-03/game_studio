@@ -1,0 +1,47 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+	# 2.11.6 introduced idle-deadline regressions; disable those wrappers
+	# explicitly until the patched official image is published and verified.
+	servers {
+		# HTTPS and streaming use HTTP/1.1 or HTTP/2; HTTP/3 is not exposed.
+		protocols h1 h2
+		timeouts {
+			read_body_idle -1s
+			write_idle -1s
+			read_body 2m
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+{$GAMESTUDIO_DOMAIN} {
+	@compressible not path /api/events
+	encode @compressible zstd gzip
+	request_body {
+		max_size 25MB
+	}
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				request>uri delete
+			}
+		}
+	}
+	reverse_proxy app:4100 {
+		header_up Host {hostport}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {hostport}
+		# SSE needs immediate streaming; API requests are never buffered/replayed.
+		flush_interval -1
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 45s
+		}
+	}
+}

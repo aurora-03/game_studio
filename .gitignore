@@ -6,3 +6,9 @@ data/
 work/
 *.log
 .DS_Store
+
+.env.*
+!.env.example
+!.env.production.example
+*.sqlite*
+.codex/

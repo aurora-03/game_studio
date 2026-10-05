@@ -13,6 +13,13 @@ export const OUTPUT_SCHEMA = {
   }, required: ['title', 'summary', 'controls', 'html'],
 };
 
+export function generationEnvironment(environment = process.env) {
+  const permitted = new Set(['PATH', 'HOME', 'USER', 'LOGNAME', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'LANG', 'LC_ALL',
+    'TMPDIR', 'TMP', 'TEMP', 'CODEX_HOME', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_ACCESS_TOKEN',
+    'CODEX_CA_CERTIFICATE', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY']);
+  return Object.fromEntries(Object.entries(environment).filter(([key]) => permitted.has(key.toUpperCase())));
+}
+
 function redact(text) {
   return String(text).replace(/\b(?:sk|sess)-[a-zA-Z0-9_-]{12,}\b/g, '[redacted]').replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0, 2500);
 }
@@ -169,7 +176,7 @@ export function buildPrompt(store, project, job) {
   }
   const imageIndices = new Map(refs.imageAssets.map((asset, index) => [asset.id, index + 1]));
   const prompt = `You are the GameStudio game developer. Produce a polished, complete, PLAYABLE HTML5 game, not a mockup or a description.
-Return ONLY the final object required by the JSON schema: title, summary, controls, html. Write all descriptions in ${project.settings.language || 'zh-CN'}.
+Return ONLY the final object required by the JSON schema: title, summary, controls, html. Write all descriptions in ${job.settings?.language || project.settings.language || 'en'}.
 The html must be a full standalone HTML document with inline CSS and classic JavaScript. Use Canvas 2D or DOM, no external dependencies, CDNs, remote scripts, imports, network requests, API keys, build steps, forms, navigation, or eval. Do not use any tools, files, shell commands, or network. All work is producing the final response directly.
 Game requirements: a real core gameplay loop, keyboard and touch controls, clear instructions, start/restart, pause where useful, score/progress, meaningful win/loss or level completion conditions, responsive layout and no accidental page scrolling during input. Accessible buttons and high contrast. Delta-time animation if animated. Handle reset cleanly: cancel old timers and avoid stale callbacks. Sound only after user interaction; respect the sound setting. Ensure no syntax/runtime errors. Keep the full HTML under 500KB.
 This game runs inside a sandbox iframe with scripts allowed but NO same-origin privileges or network connections. Canvas and Web Audio are available. Avoid localStorage/sessionStorage: these may throw in the sandbox. Use in-memory state. Only provided assets may be referenced by their exact /api/projects/.../assets/.../file URLs; image/audio elements may load these URLs. These will be bundled and rewritten during export. If no asset applies, draw graphics using Canvas/CSS/inline SVG. Never fabricate unavailable asset URLs.
@@ -208,20 +215,22 @@ export function parseGameOutput(raw) {
 }
 
 export class JobQueue {
-  constructor(store, { codexBin, timeoutMs = 900000, emit = () => {}, health }) {
+  constructor(store, { codexBin, timeoutMs = 900000, emit = () => {}, health, beforeEnqueue = () => {}, onEnqueueFailure = () => {} }) {
     this.store = store; this.codexBin = codexBin; this.timeoutMs = timeoutMs;
-    this.emit = emit; this.health = health; this.running = null; this.closed = false;
+    this.emit = emit; this.health = health; this.beforeEnqueue = beforeEnqueue; this.onEnqueueFailure = onEnqueueFailure; this.running = null; this.closed = false;
     queueMicrotask(() => this.drain());
   }
-  notifyJob(job) { this.emit({ type: 'job.updated', job: this.store.publicJob(job) }); }
-  notifyProject(project) { this.emit({ type: 'project.updated', project: this.store.publicProject(project) }); }
+  notifyJob(job) { if (this.closed) return; this.emit({ type: 'job.updated', job: this.store.publicJob(job) }); }
+  notifyProject(project) { if (this.closed) return; this.emit({ type: 'project.updated', project: this.store.publicProject(project) }); }
   save(job, project) { this.store.persist(); this.notifyJob(job); if (project) this.notifyProject(project); }
   log(job, text, kind = 'info') {
+    if (this.closed) return;
     job.logs.push({ at: now(), text: redact(text), kind });
     if (job.logs.length > 120) job.logs.splice(0, job.logs.length - 120);
     this.notifyJob(job);
   }
   enqueue(project, request) {
+    if (this.closed) throw Object.assign(new Error('Generation worker is shutting down.'), { status: 503, code: 'WORKER_CLOSED' });
     if (this.store.data.jobs.filter((j) => ['queued', 'running'].includes(j.status)).length >= 20) { const e = new Error('任务队列已满，请等待正在运行的任务完成。'); e.status = 429; throw e; }
     let node = project.nodes.find((n) => n.id === request.nodeId);
     const explicitGameTarget = !!request.nodeId && node?.type === 'game';
@@ -242,12 +251,26 @@ export class JobQueue {
     // the meaning of an already submitted prompt, material or iteration source.
     const generationProject = needsNode ? { ...project, nodes: [...project.nodes, node] } : project;
     job._generationContext = buildPrompt(this.store, generationProject, job);
-    if (needsNode) project.nodes.push(node);
-    project.messages.push({ id: newId(), role: 'user', content: job.prompt, mentions: job.mentions || [], jobId: job.id, createdAt: now() });
-    Object.assign(node.data, { status: 'queued', jobId: job.id, error: null });
-    project.updatedAt = now();
-    this.store.data.jobs.unshift(job);
-    this.save(job, project); queueMicrotask(() => this.drain()); return job;
+    const projectSnapshot = structuredClone(project), jobsSnapshot = [...this.store.data.jobs];
+    try {
+      this.beforeEnqueue(project, job);
+      if (needsNode) project.nodes.push(node);
+      project.messages.push({ id: newId(), role: 'user', content: job.prompt, mentions: job.mentions || [], jobId: job.id, createdAt: now() });
+      Object.assign(node.data, { status: 'queued', jobId: job.id, error: null });
+      project.updatedAt = now();
+      this.store.data.jobs.unshift(job);
+      this.store.persist();
+    } catch (error) {
+      // A failed durable write must never leave a runnable in-memory job after
+      // returning HTTP 500. Preserve the original project object's identity.
+      for (const key of Object.keys(project)) delete project[key];
+      Object.assign(project, projectSnapshot); this.store.data.jobs = jobsSnapshot;
+      try { this.onEnqueueFailure(job, error); } catch (releaseError) { console.error('[GameStudio] usage reservation rollback failed:', releaseError.code || 'STORAGE_ERROR'); }
+      throw error;
+    }
+    // Delivery errors cannot turn a committed job into a failed submission.
+    try { this.notifyJob(job); this.notifyProject(project); } catch (error) { console.error('[GameStudio] queue event delivery failed:', error.code || 'EVENT_ERROR'); }
+    queueMicrotask(() => this.drain()); return job;
   }
   cancel(id) {
     const job = this.store.getJob(id);
@@ -300,7 +323,7 @@ export class JobQueue {
       const args = ['exec', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check', '--json', '--color', 'never', '-m', MODEL, '-s', 'read-only', '--disable', 'shell_tool', '--disable', 'multi_agent', '--disable', 'apps', '-c', 'web_search="disabled"', '--output-schema', schemaPath, '--output-last-message', outputPath];
       for (const imagePath of images) args.push('--image', imagePath);
       args.push('-');
-      const child = spawn(this.codexBin, args, { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true }); run.child = child;
+      const child = spawn(this.codexBin, args, { cwd: dir, env: generationEnvironment(), stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true }); run.child = child;
       let stdout = '', stderr = '', outputChars = 0;
       const finish = (code, spawnError) => {
         if (run.finished) return; run.finished = true; clearTimeout(run.timer); clearTimeout(run.killTimer);
@@ -320,6 +343,7 @@ export class JobQueue {
         finally { delete job.providerError; delete job.providerFailed; if (this.running === run) this.running = null; queueMicrotask(() => this.drain()); }
       };
       function parseLine(line, queue) {
+        if (queue.closed) return;
         try {
           const event = JSON.parse(line);
           if (event.type === 'error' || event.type === 'turn.failed') {
@@ -344,5 +368,5 @@ export class JobQueue {
       run.timer.unref?.();
     } catch (error) { this.fail(job, error.message); this.running = null; queueMicrotask(() => this.drain()); }
   }
-  close() { this.closed = true; if (this.running) this.cancel(this.running.job.id); }
+  close() { this.closed = true; if (this.running) { try { this.cancel(this.running.job.id); } catch (error) { console.error('[GameStudio] shutdown state persistence failed:', error.code || 'STORAGE_ERROR'); this.terminate(this.running); } } }
 }

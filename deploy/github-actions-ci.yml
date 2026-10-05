@@ -1,0 +1,27 @@
+name: Verify production project
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm test
+      - name: Build application and HTTPS proxy
+        run: |
+          docker build --target app -t gamestudio-ci-app .
+          docker build --target proxy -t gamestudio-ci-proxy .
+      - name: Verify actual proxy configuration
+        run: docker run --rm --network none -e GAMESTUDIO_DOMAIN=studio.example.test -e ACME_EMAIL=operator@example.test gamestudio-ci-proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

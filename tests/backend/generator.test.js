@@ -191,7 +191,7 @@ test('queued generation snapshots material, settings, text files and iteration s
   character.data.content = 'SUBMITTED_CHARACTER'; project.settings.visualStyle = 'SUBMITTED_STYLE';
   const asset = { id: newId(), name: 'design.txt', mimeType: 'text/plain', extension: '.txt', url: '/design.txt' }; project.assets.push(asset); character.data.assetIds = [asset.id];
   fs.mkdirSync(path.dirname(store.assetPath(project.id, asset)), { recursive: true }); fs.writeFileSync(store.assetPath(project.id, asset), 'SUBMITTED_DOCUMENT');
-  const queue = new JobQueue(store, { codexBin: 'not-run', health: { check: async () => ({ available: false }) } }); queue.closed = true;
+  const queue = new JobQueue(store, { codexBin: 'not-run', health: { check: async () => ({ available: false }) } }); queue.drain = () => {}; t.after(() => queue.close());
   const prompt = '继续修改 @主角';
   const job = queue.enqueue(project, { prompt, mode: 'iterate', nodeId: game.id, mentions: [at(prompt, '主角', character.id)] });
   assert.equal(job.sourceVersionId, oldVersion.id); assert.equal(job.model, 'gpt-6.1-sol');
@@ -207,7 +207,7 @@ test('queued generation snapshots material, settings, text files and iteration s
 test('failed submission creates no game node, message or job side effects', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gamestudio-job-atomic-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new Store(dir, { seed: false }), project = store.createProject({ name: 'Empty', nodes: [] });
-  const queue = new JobQueue(store, { codexBin: 'not-run', health: { check: async () => ({ available: false }) } }); queue.closed = true;
+  const queue = new JobQueue(store, { codexBin: 'not-run', health: { check: async () => ({ available: false }) } }); queue.drain = () => {}; t.after(() => queue.close());
   assert.throws(() => queue.enqueue(project, { prompt: 'Make a game', referenceNodeIds: ['missing'] }), /已删除/);
   assert.equal(project.nodes.length, 0); assert.equal(project.messages.length, 0); assert.equal(store.data.jobs.length, 0);
 });
@@ -218,7 +218,7 @@ test('multiple output nodes iterate their own version and fresh explicit outputs
   const first = project.nodes.find((node) => node.type === 'game');
   const firstVersion = store.addVersion(project, { html: validHtml.replace('score++', 'score+=111'), title: 'First game', nodeId: first.id });
   const fresh = { id: newId(), type: 'game', position: { x: 1500, y: 900 }, data: { title: 'Fresh game', content: '' } }; project.nodes.push(fresh);
-  const queue = new JobQueue(store, { codexBin: 'not-run', health: { check: async () => ({ available: false }) } }); queue.closed = true;
+  const queue = new JobQueue(store, { codexBin: 'not-run', health: { check: async () => ({ available: false }) } }); queue.drain = () => {}; t.after(() => queue.close());
   const beforeNodes = structuredClone(project.nodes);
   assert.throws(() => queue.enqueue(project, { prompt: 'Change fresh game', mode: 'iterate', nodeId: fresh.id }), (error) => error.status === 400 && /源版本/.test(error.message));
   assert.equal(project.messages.length, 0); assert.equal(store.data.jobs.length, 0); assert.deepEqual(project.nodes, beforeNodes);

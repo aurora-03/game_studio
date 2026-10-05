@@ -766,8 +766,87 @@ const memory = shell('COLOR MEMORY · 色彩记忆', '点击两张卡片寻找�
 const c=document.getElementById('game'),x=c.getContext('2d'),s=document.getElementById('status');const colors=['#ff8bb1','#ffca85','#a8eaa9','#91b7ff','#cdb0ff','#80e1d8'];let cards,first,lock,turns,matches,pending;function reset(){clearTimeout(pending);cards=[...colors,...colors].sort(()=>Math.random()-.5).map(color=>({color,open:false,done:false}));first=null;lock=false;turns=0;matches=0}reset();document.getElementById('restart').onclick=reset;function rect(i){return{x:144+(i%4)*174,y:65+Math.floor(i/4)*143,w:150,h:120}}c.onpointerdown=e=>{if(lock)return;let r=c.getBoundingClientRect(),px=(e.clientX-r.left)/r.width*960,py=(e.clientY-r.top)/r.height*540;let i=cards.findIndex((a,j)=>{let q=rect(j);return px>q.x&&px<q.x+q.w&&py>q.y&&py<q.y+q.h});if(i<0||cards[i].open||cards[i].done)return;cards[i].open=true;if(first===null){first=i;return}turns++;let a=first,b=i;first=null;if(cards[a].color===cards[b].color){cards[a].done=cards[b].done=true;matches++;return}lock=true;pending=setTimeout(()=>{cards[a].open=cards[b].open=false;lock=false},650)};function frame(){x.fillStyle='#15141f';x.fillRect(0,0,960,540);cards.forEach((a,i)=>{let q=rect(i);x.fillStyle=a.done?'#253f36':a.open?a.color:'#292a3b';x.beginPath();x.roundRect(q.x,q.y,q.w,q.h,13);x.fill();x.strokeStyle=a.done?'#a8eaa9':'#3a3c53';x.stroke();x.textAlign='center';x.textBaseline='middle';x.font='bold 36px system-ui';x.fillStyle=a.open||a.done?'#20212d':'#65697f';x.fillText(a.done?'✓':a.open?'●':'?',q.x+q.w/2,q.y+q.h/2)});x.textAlign='left';x.textBaseline='alphabetic';x.fillStyle='#ccc';x.font='18px system-ui';x.fillText('配对 '+matches+'/6',30,35);x.fillText('步数 '+turns,800,35);s.textContent=matches===6?'全部完成！用了 '+turns+' 步':'已完成 '+matches+' / 6';if(matches===6){x.fillStyle='#0009';x.fillRect(0,460,960,80);x.textAlign='center';x.fillStyle='#a8eaa9';x.font='bold 22px system-ui';x.fillText('恭喜完成 · 点击「重新开始」再挑战',480,508)}requestAnimationFrame(frame)}requestAnimationFrame(frame);
 `, '#ffca91');
 
+// These translations are authored only for the three built-in source documents.
+// User-authored HTML is never passed through this replacement table.
+const demoEnglishLabels = {
+  'NEON DRIFT · 霓虹疾跑': 'NEON DRIFT',
+  'ORBIT GUARD · 星际守卫': 'ORBIT GUARD',
+  'COLOR MEMORY · 色彩记忆': 'COLOR MEMORY',
+  '空格 / 点击跳跃 · P 暂停 · 避开障碍，收集能量': 'Space / tap to jump · P to pause · Dodge obstacles and collect energy',
+  '方向键 / WASD 或拖动飞船 · 自动射击 · P 暂停': 'Arrows / WASD or drag to move · Auto fire · P to pause',
+  '点击两张卡片寻找相同图案 · 完成全部配对': 'Tap two cards to find matching colors · Complete all six pairs',
+  'GameStudio · 本地可玩示例': 'GameStudio · Playable example',
+  '游戏画布': ' game canvas',
+  '点击画面或按空格跳跃': 'Tap the canvas or press Space to jump',
+  '点击 / 空格重新开始': 'Tap / Space to restart',
+  '恭喜完成 · 点击「重新开始」再挑战': 'Well done · Click Restart to play again',
+  '全部完成！用了 ': 'All matched! Attempts: ',
+  '点击重新出发': 'Tap to start again',
+  '守卫结束 · ': 'Run ended · ',
+  '本次得分 ': 'Final score: ',
+  '按 P 继续': 'Press P to resume',
+  '挑战结束': 'Run ended',
+  '已暂停': 'Paused',
+  '重新开始': 'Restart',
+  '已完成 ': 'Matched ',
+  '生命 ': 'Lives ',
+  '配对 ': 'Pairs ',
+  '步数 ': 'Attempts ',
+  '分数 ': 'Score ',
+  ' 分': ' points',
+  ' 步': '',
+};
+function englishDemoHtml(original) {
+  let html = original.replace('<html lang="zh-CN">', '<html lang="en">');
+  for (const [source, translation] of Object.entries(demoEnglishLabels)) html = html.split(source).join(translation);
+  return html;
+}
+function chineseDemoHtml(original) {
+  return original.replaceAll('SCORE ', '分数 ').replaceAll('GameStudio · 本地可玩示例', 'GameStudio · 可玩示例');
+}
+
 export const DEMOS = [
-  { name: '霓虹疾跑', description: '横版跑酷 · 本地可玩示例', templateId: 'neon-runner', title: 'NEON DRIFT · 霓虹疾跑', summary: '二段跳、随机障碍、能量收集与递增难度的跑酷示例。', controls: '空格 / 点击跳跃，P 暂停，点击重开', html: runner, theme: '#c9ff5b', genre: 'runner' },
-  { name: '星际守卫', description: '太空射击 · 本地可玩示例', templateId: 'space-defender', title: 'ORBIT GUARD · 星际守卫', summary: '自动射击、敌人波次、生命与得分的星空射击示例。', controls: '方向键 / WASD 或拖动移动，P 暂停', html: space, theme: '#91b7ff', genre: 'shooter' },
-  { name: '色彩记忆', description: '益智配对 · 本地可玩示例', templateId: 'tile-puzzle', title: 'COLOR MEMORY · 色彩记忆', summary: '寻找相同颜色的卡片，完成六组配对的记忆示例。', controls: '点击卡片配对，点击重新开始重置', html: memory, theme: '#ffca91', genre: 'puzzle' },
+  {
+    name: 'Neon Drift', description: 'Side-scrolling runner · Playable example', templateId: 'neon-runner',
+    title: 'NEON DRIFT', summary: 'A runner with double jump, random obstacles, energy pickups, and gradually increasing speed.',
+    controls: 'Space / tap to jump · P to pause · Tap / Space to restart after a collision',
+    html: englishDemoHtml(runner), theme: '#c9ff5b', genre: 'runner',
+    legacyNames: ['霓虹疾跑'], legacyTitles: ['NEON DRIFT · 霓虹疾跑'], legacyHtml: [runner],
+    legacyDescriptions: ['横版跑酷 · 本地可玩示例'],
+    locales: { zh: {
+      name: '霓虹疾跑', description: '横版跑酷 · 可玩示例', title: 'NEON DRIFT · 霓虹疾跑',
+      summary: '二段跳、随机障碍、能量收集与递增难度的跑酷示例。',
+      controls: '空格 / 点击跳跃，P 暂停，碰撞后点击或按空格重开', html: chineseDemoHtml(runner),
+    } },
+    legacyControls: ['空格 / 点击跳跃，P 暂停，点击重开'],
+  },
+  {
+    name: 'Orbit Guard', description: 'Space shooter · Playable example', templateId: 'space-defender',
+    title: 'ORBIT GUARD', summary: 'An auto-firing space shooter with incoming enemies, three lives, movement controls, and a score challenge.',
+    controls: 'Arrows / WASD or drag to move · P to pause · Tap after defeat or click Restart',
+    html: englishDemoHtml(space), theme: '#91b7ff', genre: 'shooter',
+    legacyNames: ['星际守卫'], legacyTitles: ['ORBIT GUARD · 星际守卫'], legacyHtml: [space],
+    legacyDescriptions: ['太空射击 · 本地可玩示例'],
+    legacySummaries: ['自动射击、敌人波次、生命与得分的星空射击示例。'],
+    locales: { zh: {
+      name: '星际守卫', description: '太空射击 · 可玩示例', title: 'ORBIT GUARD · 星际守卫',
+      summary: '自动射击、来袭敌人、三条生命与得分挑战的星空射击示例。',
+      controls: '方向键 / WASD 或拖动移动，P 暂停，失败后点击画布或重开按钮', html: chineseDemoHtml(space),
+    } },
+    legacyControls: ['方向键 / WASD 或拖动移动，P 暂停'],
+  },
+  {
+    name: 'Color Memory', description: 'Memory puzzle · Playable example', templateId: 'tile-puzzle',
+    title: 'COLOR MEMORY', summary: 'Find matching colored cards and complete six pairs in this relaxed memory puzzle.',
+    controls: 'Tap cards to find pairs · Click Restart to reset and reshuffle',
+    html: englishDemoHtml(memory), theme: '#ffca91', genre: 'puzzle',
+    legacyNames: ['色彩记忆'], legacyTitles: ['COLOR MEMORY · 色彩记忆'], legacyHtml: [memory],
+    legacyDescriptions: ['益智配对 · 本地可玩示例'],
+    locales: { zh: {
+      name: '色彩记忆', description: '记忆配对 · 可玩示例', title: 'COLOR MEMORY · 色彩记忆',
+      summary: '寻找相同颜色的卡片，完成六组配对的记忆示例。',
+      controls: '点击卡片配对，点击重新开始重置和洗牌', html: chineseDemoHtml(memory),
+    } },
+    legacyControls: ['点击卡片配对，点击重新开始重置'],
+  },
 ];

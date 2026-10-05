@@ -67,7 +67,7 @@ test('cloning remaps version and asset IDs while source files remain unchanged',
 test('store rejects path traversal and initializes three visibly labeled demo games', (t) => {
   const store = new Store(temp(t));
   assert.equal(store.data.projects.length, 3);
-  for (const p of store.data.projects) { assert.equal(p.demo, true); assert.equal(p.settings.genre, p.genre); assert.equal(p.versions[0].source, 'demo'); assert.match(store.readVersion(p.id, p.activeVersionId), /本地可玩示例/); }
+  for (const p of store.data.projects) { assert.equal(p.demo, true); assert.equal(p.settings.genre, p.genre); assert.equal(p.versions[0].source, 'demo'); assert.match(store.readVersion(p.id, p.activeVersionId), /Playable example/); }
   assert.deepEqual(new Set(store.data.projects.map((p) => p.settings.genre)), new Set(['runner', 'shooter', 'puzzle']));
   assert.throws(() => store.versionPath('../escape', 'valid'));
   assert.throws(() => store.versionPath('valid', '../../escape'));
