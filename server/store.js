@@ -12,9 +12,14 @@ function atomicWrite(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   const fd = fs.openSync(temp, 'wx', 0o600);
-  try { fs.writeFileSync(fd, value); fs.fsyncSync(fd); }
-  finally { fs.closeSync(fd); }
-  fs.renameSync(temp, file);
+  try {
+    try { fs.writeFileSync(fd, value); fs.fsyncSync(fd); }
+    finally { fs.closeSync(fd); }
+    fs.renameSync(temp, file);
+  } catch (error) {
+    try { fs.rmSync(temp, { force: true }); } catch { /* Preserve the original I/O failure. */ }
+    throw error;
+  }
 }
 
 export class Store {
@@ -41,6 +46,19 @@ export class Store {
       } else if (project.genre && project.settings.genre !== project.genre) {
         project.settings.genre = project.genre; changed = true;
       }
+      if (project.demo) {
+        const base = TEMPLATES.find(t => t.id === project.templateId), locale = String(project.settings.language || 'en').startsWith('zh') ? 'zh' : 'en';
+        const kit = base ? { ...base, ...(base.locales?.[locale] || {}) } : null;
+        for (const node of project.nodes) {
+          if (node.type === 'brief' && base?.legacyPrompts?.includes(node.data.content)) { node.data.content = kit.prompt; changed = true; }
+          const material = kit?.materials?.[node.type];
+          if (!material || node.data.assetId || node.data.assetIds?.length || node.data.content?.trim() || Object.values(node.data.specifications || {}).some(v => typeof v === 'string' && v.trim())) continue;
+          const title = node.data.title;
+          Object.assign(node.data, clone(material), { assetIds: [], mentions: [], status: 'idle' });
+          if (title && !['主角素材','场景素材','道具素材','音频素材','Character','Scene','Prop','Audio'].includes(title)) node.data.title = title;
+          changed = true;
+        }
+      }
     }
     for (const job of this.data.jobs) {
       if (job.status === 'running') {
@@ -56,6 +74,13 @@ export class Store {
       changed = true;
     }
     if (changed || !fs.existsSync(this.file)) this.persist();
+  }
+
+  diskBytes(directory = this.dataDir) {
+    let total = 0;
+    if (!fs.existsSync(directory)) return total;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) { const file = path.join(directory, entry.name); if (entry.isSymbolicLink()) throw new Error('Symlinks are not allowed in tenant storage.'); if (entry.isDirectory()) total += this.diskBytes(file); else if (entry.isFile()) total += fs.statSync(file).size; }
+    return total;
   }
 
   persist() {
@@ -83,25 +108,34 @@ export class Store {
   getJob(id) { return this.data.jobs.find((j) => j.id === id); }
   readVersion(projectId, versionId) { return fs.readFileSync(this.versionPath(projectId, versionId), 'utf8'); }
 
-  createProject({ name = '未命名游戏', description = '', templateId, nodes, settings = {}, demo = false } = {}) {
-    const template = TEMPLATES.find((t) => t.id === templateId);
+  createProject({ name, description = '', templateId, nodes, settings = {}, demo = false } = {}) {
+    const baseTemplate = TEMPLATES.find((t) => t.id === templateId);
+    const locale = String(settings.language || this.data.settings.language || 'en').startsWith('zh') ? 'zh' : 'en';
+    const template = baseTemplate ? { ...baseTemplate, ...(baseTemplate.locales?.[locale] || {}) } : undefined;
     const timestamp = now();
     const project = {
-      id: newId(), name, description, templateId: template?.id || null, status: 'active', demo,
+      id: newId(), name: name || (locale === 'zh' ? '未命名游戏' : 'Untitled game'), description, templateId: template?.id || null, status: 'active', demo,
       theme: template?.theme || '#c9ff5b', genre: template?.genre || settings.genre || 'custom',
       nodes: nodes || [
-        { id: newId(), type: 'brief', position: { x: 70, y: 400 }, data: { title: '游戏创意', content: template?.prompt || '', mentions: [], status: 'idle' } },
-        { id: newId(), type: 'character', position: { x: 460, y: 60 }, data: { title: '主角素材', content: '', specifications: { appearance: '', personality: '', abilities: '' }, assetIds: [], mentions: [], status: 'idle' } },
-        { id: newId(), type: 'scene', position: { x: 460, y: 780 }, data: { title: '场景素材', content: '', specifications: { environment: '', layout: '', camera: '' }, assetIds: [], mentions: [], status: 'idle' } },
-        { id: newId(), type: 'prop', position: { x: 860, y: 60 }, data: { title: '道具素材', content: '', specifications: { usage: '', interaction: '', rules: '' }, assetIds: [], mentions: [], status: 'idle' } },
-        { id: newId(), type: 'audio', position: { x: 860, y: 780 }, data: { title: '音频素材', content: '', specifications: { mood: '', trigger: '', mixing: '' }, assetIds: [], mentions: [], status: 'idle' } },
-        { id: newId(), type: 'game', position: { x: 1300, y: 400 }, data: { title: '游戏预览', content: '', mentions: [], status: 'idle' } },
+        { id: newId(), type: 'brief', position: { x: 70, y: 400 }, data: { title: locale === 'zh' ? '游戏创意' : 'Game brief', content: template?.prompt || '', mentions: [], status: 'idle' } },
+        { id: newId(), type: 'character', position: { x: 460, y: 60 }, data: { title: locale === 'zh' ? '主角素材' : 'Character', content: '', specifications: { appearance: '', personality: '', abilities: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'scene', position: { x: 460, y: 780 }, data: { title: locale === 'zh' ? '场景素材' : 'Scene', content: '', specifications: { environment: '', layout: '', camera: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'prop', position: { x: 860, y: 60 }, data: { title: locale === 'zh' ? '道具素材' : 'Prop', content: '', specifications: { usage: '', interaction: '', rules: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'audio', position: { x: 860, y: 780 }, data: { title: locale === 'zh' ? '音频素材' : 'Audio', content: '', specifications: { mood: '', trigger: '', mixing: '' }, assetIds: [], mentions: [], status: 'idle' } },
+        { id: newId(), type: 'game', position: { x: 1300, y: 400 }, data: { title: locale === 'zh' ? '游戏预览' : 'Game', content: '', mentions: [], status: 'idle' } },
       ],
       edges: [],
       settings: { ...DEFAULT_SETTINGS, ...(template?.settings || {}), ...this.data.settings, ...settings, genre: settings.genre || template?.genre || this.data.settings.genre || DEFAULT_SETTINGS.genre },
       messages: [], assets: [], versions: [], activeVersionId: null,
       createdAt: timestamp, updatedAt: timestamp,
     };
+    if (!nodes) {
+      for (const node of project.nodes) {
+        const material = template?.materials?.[node.type];
+        if (material) Object.assign(node.data, clone(material), { assetIds: [], mentions: [], status: 'idle' });
+        if (node.type === 'game' && template?.output) Object.assign(node.data, clone(template.output), { mentions: [], status: 'idle' });
+      }
+    }
     if (!nodes) for (const source of project.nodes.filter((node) => node.type !== 'game')) {
       project.edges.push({ id: newId(), source: source.id, target: project.nodes.find((node) => node.type === 'game').id, animated: false });
     }
@@ -137,7 +171,7 @@ export class Store {
     project.messages.push({ id: newId(), role: 'assistant', content: `这是一个本地可玩示例：${demo.summary} 可以先试玩，再通过 AI 导演修改玩法。`, createdAt: now() });
   }
 
-  cloneProject(original) {
+  cloneProject(original, sourceStore = this) {
     const copy = clone(original);
     copy.id = newId(); copy.name = `${original.name} · 副本`; copy.status = 'active'; copy.demo = false;
     copy.createdAt = copy.updatedAt = now(); copy.messages = []; copy.versions = [];
@@ -147,12 +181,12 @@ export class Store {
       next.url = `/api/projects/${copy.id}/assets/${next.id}/file`;
       oldToNew.set(asset.url, next.url);
       fs.mkdirSync(path.dirname(this.assetPath(copy.id, next)), { recursive: true });
-      fs.copyFileSync(this.assetPath(original.id, asset), this.assetPath(copy.id, next));
+      fs.copyFileSync(sourceStore.assetPath(original.id, asset), this.assetPath(copy.id, next));
       return next;
     });
     const versionIds = new Map();
     for (const version of [...original.versions].reverse()) {
-      let html = this.readVersion(original.id, version.id);
+      let html = sourceStore.readVersion(original.id, version.id);
       for (const [before, after] of oldToNew) html = html.split(before).join(after);
       const next = { ...version, id: newId(), jobId: null };
       next.previewUrl = `/api/projects/${copy.id}/versions/${next.id}/html`;

@@ -1,3 +1,4 @@
+import { t } from './locale.ts';
 export type MentionToken = { nodeId: string; label: string; start: number; end: number };
 export type MentionCandidate = {
   id: string;
@@ -6,15 +7,15 @@ export type MentionCandidate = {
 };
 export type MentionRange = { start: number; end: number };
 export const materialLabels: Record<string, string> = {
-  character: '人物素材', scene: '场景素材', prop: '道具素材', audio: '音效素材',
-  asset: '参考文件', brief: '创作需求', text: '文本笔记', game: '游戏',
+  character: 'Character', scene: 'Scene', prop: 'Prop', audio: 'Audio',
+  asset: 'Reference', brief: 'Brief', text: 'Note', game: 'Game',
 };
 const roleSearchTerms: Record<string,string> = {
-  character: '人物 角色 主角 NPC', scene: '场景 地图 环境 关卡', prop: '道具 物品 装备',
-  audio: '声音 音效 音频 音乐 配乐', asset: '素材 图片 文件 参考', game: '游戏 生成 成品',
+  character: 'character person hero NPC 人物 角色 主角', scene: 'scene map environment level 场景 地图 环境 关卡', prop: 'prop item equipment 道具 物品 装备',
+  audio: 'audio sound music 声音 音效 音频 音乐 配乐', asset: 'reference image file 素材 图片 文件 参考', game: 'game output 游戏 生成 成品',
 };
 export function mentionName(node: MentionCandidate) {
-  return String(node.data.label || node.data.title || `未命名${materialLabels[node.type || ''] || '节点'}`);
+  return String(node.data.label || node.data.title || t('Untitled {type}', {type:t(materialLabels[node.type || ''] || 'Node')}));
 }
 export function mentionSummary(node: MentionCandidate) {
   const body = typeof node.data.content === 'string' ? node.data.content.trim() : '';
@@ -22,7 +23,7 @@ export function mentionSummary(node: MentionCandidate) {
   const specs = node.data.specifications;
   const details = specs && typeof specs === 'object' && !Array.isArray(specs)
     ? Object.values(specs).filter((v): v is string => typeof v === 'string' && !!v.trim()).join(' · ') : '';
-  return details || String(node.data.description || node.data.summary || '点击后按节点绑定引用');
+  return details || String(node.data.description || node.data.summary || t('Select to reference this node'));
 }
 // Offsets use JavaScript UTF-16, the same units as textarea.selectionStart.
 export function validMentions(value: string, tokens: MentionToken[] = []): MentionToken[] {

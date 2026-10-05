@@ -86,8 +86,13 @@ import type { LucideIcon } from "lucide-react";
 import clsx from "clsx";
 import { api, request } from "./api";
 import { MentionInput } from "./components/MentionInput";
+import { MaterialCover } from "./components/MaterialCover";
+import { boundAssetIds, buildAssetCatalog, filterAssetCatalog, materialCategories, materialCategoryLabels } from "./materials";
+import type { AssetCatalogItem } from "./materials";
+import { t, useLanguage, localizedLabels, localeCode, LanguageSwitch } from "./i18n";
+import "./material-library.css";
 import { ArrangeIcon, AssetLibraryIcon, AudioIcon, CharacterIcon, CursorIcon, DirectorIcon, GameCanvasIcon, HistoryIcon, SceneIcon, TextNodeIcon, WorkflowIcon, PropIcon } from "./components/StudioIcons";
-import { insertMention, referencedNodeIds } from "./mentions";
+import { insertMention, referencedNodeIds, mentionSummary } from "./mentions";
 import type { MentionToken } from "./mentions";
 import type {
   Asset,
@@ -130,47 +135,47 @@ const parseRoute = (): Route => {
 const uid = () => crypto.randomUUID();
 let projectCreationPending = false;
 const date = (value: string) =>
-  new Date(value).toLocaleDateString("zh-CN", {
+  new Date(value).toLocaleDateString(localeCode(), {
     month: "2-digit",
     day: "2-digit",
   });
 const time = (value: string) =>
-  new Date(value).toLocaleString("zh-CN", {
+  new Date(value).toLocaleString(localeCode(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   });
 const isActive = (j: Job) => ["running", "queued"].includes(j.status);
-const statusNames: Record<string, string> = {
-  idle: "待生成",
-  queued: "等待生成",
-  running: "正在生成",
-  succeeded: "生成完成",
-  failed: "生成失败",
-  cancelled: "已取消",
-};
-const genreNames: Record<string, string> = {
-  arcade: "街机",
-  platformer: "平台跳跃",
-  puzzle: "益智",
-  shooter: "射击",
-  rpg: "角色冒险",
-  strategy: "策略",
-  runner: "跑酷",
-  breakout: "弹球",
-  simulation: "模拟经营",
-  custom: "自由创作",
-};
-const phaseNames: Record<string, string> = {
-  queued: "等待生成",
-  starting: "启动 Codex",
-  generating: "编写游戏代码",
-  validating: "检查游戏代码",
-  completed: "生成完成",
-  failed: "生成失败",
-  cancelled: "已取消",
-};
+const statusNames: Record<string, string> = localizedLabels({
+  idle: "Pending",
+  queued: "Waiting to generate",
+  running: "Generating",
+  succeeded: "Generation complete",
+  failed: "Generation failed",
+  cancelled: "Canceled",
+});
+const genreNames: Record<string, string> = localizedLabels({
+  arcade: "Arcade",
+  platformer: "Platformer",
+  puzzle: "Puzzle",
+  shooter: "Shooter",
+  rpg: "Adventure",
+  strategy: "Strategy",
+  runner: "Runner",
+  breakout: "Breakout",
+  simulation: "Simulation",
+  custom: "Custom",
+});
+const phaseNames: Record<string, string> = localizedLabels({
+  queued: "Waiting to generate",
+  starting: "Starting generation",
+  generating: "Writing game code",
+  validating: "Checking game code",
+  completed: "Generation complete",
+  failed: "Generation failed",
+  cancelled: "Canceled",
+});
 const genreIcons: Record<string, LucideIcon> = {
   arcade: GameCanvasIcon, runner: Route, platformer: Route,
   shooter: Crosshair, puzzle: Puzzle, rpg: SceneIcon,
@@ -298,7 +303,7 @@ function Modal({
       >
         <header>
           <h2>{title}</h2>
-          <IconButton icon={X} label="关闭" onClick={onClose} />
+          <IconButton icon={X} label={t("Close")} onClick={onClose} />
         </header>
         {children}
       </div>
@@ -400,6 +405,7 @@ function Cover({
 }
 
 export default function App() {
+  const { language } = useLanguage();
   const [route, setRoute] = useState<Route>(parseRoute),
     [data, setData] = useState<Bootstrap>({
       projects: [],
@@ -515,7 +521,7 @@ export default function App() {
     try {
       const latest = await api.project(project.id);
       if (latest.status === "trashed") {
-        notify("请先恢复项目，再继续编辑或试玩");
+        notify(t("Restore this project before editing or playing it."));
         return;
       }
       const opened = latest.demo
@@ -523,7 +529,7 @@ export default function App() {
         : latest;
       mergeProject(opened);
       navigate("home", opened.id);
-      if (latest.demo) notify("已创建示例副本，可以放心修改创作");
+      if (latest.demo) notify(t("Example copied. You can now customize it."));
     } catch (e) {
       notify((e as Error).message);
     }
@@ -534,9 +540,9 @@ export default function App() {
     setCreating(true);
     try {
       const project = await api.create({
-        name: template ? template.name : newName.trim() || "未命名游戏",
+        name: template ? (language === "zh" ? template.locales?.zh?.name || template.name : template.name) : newName.trim() || t("Untitled game"),
         templateId: template?.id,
-        settings: template?.settings,
+        settings: { ...template?.settings, language: language === "zh" ? "zh-CN" : "en" },
       });
       mergeProject(project);
       setNewModal(false);
@@ -560,15 +566,15 @@ export default function App() {
         }));
       } else if (kind === "trash") mergeProject(await api.trash(project.id));
       else mergeProject(await api.action(project.id, kind));
-      notify(
+      notify(t(
         {
-          clone: "已创建项目副本",
-          archive: "项目已归档",
-          restore: "项目已恢复",
-          trash: "项目已移入回收站",
-          permanent: "项目已彻底删除",
-        }[kind] || "已完成",
-      );
+          clone: "Project copied.",
+          archive: "Project archived.",
+          restore: "Project restored.",
+          trash: "Project moved to trash.",
+          permanent: "Project permanently deleted.",
+        }[kind] || "Completed",
+      ));
     } catch (e) {
       notify((e as Error).message);
     }
@@ -583,7 +589,7 @@ export default function App() {
         }),
       );
       setRename(undefined);
-      notify("项目名称已更新");
+      notify(t("Project name updated."));
     } catch (e) {
       notify((e as Error).message);
     }
@@ -595,11 +601,11 @@ export default function App() {
       setRenameDescription(p.description || "");
     } else if (kind === "trash" || kind === "permanent")
       setConfirm({
-        title: kind === "permanent" ? "彻底删除项目" : "移入回收站",
+        title: kind === "permanent" ? "Permanently delete project" : "Move to trash",
         text:
           kind === "permanent"
-            ? `“${p.name}”的画布、素材与游戏版本将永久删除。`
-            : `“${p.name}”将移入回收站，可以随时恢复。`,
+            ? t("The canvas, assets and game versions of “{0}” will be permanently deleted.", {"0": p.name})
+            : t("“{0}” will be moved to trash. You can restore it at any time.", {"0": p.name}),
         action: () => action(p, kind),
       });
     else void action(p, kind);
@@ -607,7 +613,7 @@ export default function App() {
   const current = data.projects.find((p) => p.id === route.projectId);
   const context = {
     projects: data.projects,
-    templates: data.templates,
+    templates: data.templates.map((template) => ({ ...template, ...(language === "zh" ? template.locales?.zh : {}), settings: { ...template.settings, language: language === "zh" ? "zh-CN" : "en" } })),
     jobs: data.jobs || [],
     health,
     settings: data.settings,
@@ -624,21 +630,17 @@ export default function App() {
       <main className="unavailable-project">
         <Empty
           icon={Trash2}
-          title="项目已移入回收站"
-          description={`请先恢复“${current.name}”，再继续编辑或试玩。已有画布、素材与版本仍然保留。`}
+          title={t("Project moved to trash.")}
+          description={t("Restore “{0}” before editing or playing. Its canvas, assets and versions are preserved.", {"0": current.name})}
         >
           <div className="empty-actions">
             <button className="button" onClick={() => navigate("projects")}>
-              <ArrowLeft size={15} />
-              返回项目
-            </button>
+              <ArrowLeft size={15} />{t("Back to projects")}</button>
             <button
               className="button primary"
               onClick={() => void action(current, "restore")}
             >
-              <RotateCcw size={15} />
-              恢复项目
-            </button>
+              <RotateCcw size={15} />{t("Restore project")}</button>
           </div>
         </Empty>
         {renderOverlays()}
@@ -670,31 +672,27 @@ export default function App() {
           <div className="toast" role="status">
             <CheckCircle2 size={17} />
             {toast}
-            <button aria-label="关闭提示" onClick={() => setToast("")}>
+            <button aria-label={t("Dismiss notification")} onClick={() => setToast("")}>
               <X size={14} />
             </button>
           </div>
         )}
         {newModal && (
-          <Modal title="新建游戏项目" onClose={() => setNewModal(false)}>
-            <p className="muted">从空白画布开始，把灵感变成可玩的游戏。</p>
-            <label className="field-label">
-              项目名称
-              <input
+          <Modal title={t("New game project")} onClose={() => setNewModal(false)}>
+            <p className="muted">{t("Start with a blank canvas and turn your idea into a playable game.")}</p>
+            <label className="field-label">{t("Project name")}<input
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void create();
                 }}
-                placeholder="例如：星际漫游"
+                placeholder={t("For example: Star Wanderer")}
                 maxLength={120}
               />
             </label>
             <div className="modal-actions">
-              <button className="button" onClick={() => setNewModal(false)}>
-                取消
-              </button>
+              <button className="button" onClick={() => setNewModal(false)}>{t("Cancel")}</button>
               <button
                 className="button primary"
                 disabled={creating}
@@ -704,17 +702,13 @@ export default function App() {
                   <Loader2 size={16} className="spin" />
                 ) : (
                   <Plus size={16} />
-                )}
-                创建画布
-              </button>
+                )}{t("Create canvas")}</button>
             </div>
           </Modal>
         )}
         {rename && (
-          <Modal title="重命名项目" onClose={() => setRename(undefined)}>
-            <label className="field-label">
-              项目名称
-              <input
+          <Modal title={t("Rename project")} onClose={() => setRename(undefined)}>
+            <label className="field-label">{t("Project name")}<input
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
                 onKeyDown={(e) => {
@@ -723,45 +717,36 @@ export default function App() {
                 maxLength={120}
               />
             </label>
-            <label className="field-label">
-              项目描述
-              <textarea
+            <label className="field-label">{t("Description")}<textarea
                 value={renameDescription}
                 onChange={(e) => setRenameDescription(e.target.value)}
                 maxLength={4000}
                 rows={3}
-                placeholder="记录这个游戏的目标和灵感…"
+                placeholder={t("Describe the goals and inspiration for this game…")}
               />
             </label>
             <div className="modal-actions">
-              <button className="button" onClick={() => setRename(undefined)}>
-                取消
-              </button>
+              <button className="button" onClick={() => setRename(undefined)}>{t("Cancel")}</button>
               <button
                 className="button primary"
                 disabled={!renameValue.trim()}
                 onClick={() => void renameProject()}
-              >
-                保存
-              </button>
+              >{t("Save")}</button>
             </div>
           </Modal>
         )}
         {confirm && (
-          <Modal title={confirm.title} onClose={() => setConfirm(undefined)}>
+          <Modal title={t(confirm.title)} onClose={() => setConfirm(undefined)}>
             <p className="muted">{confirm.text}</p>
             <div className="modal-actions">
-              <button className="button" onClick={() => setConfirm(undefined)}>
-                取消
-              </button>
+              <button className="button" onClick={() => setConfirm(undefined)}>{t("Cancel")}</button>
               <button
                 className="button danger"
                 onClick={() => {
                   void confirm.action();
                   setConfirm(undefined);
                 }}
-              >
-                确认{confirm.title}
+              >{t("Confirm")}{t(confirm.title)}
               </button>
             </div>
           </Modal>
@@ -787,7 +772,7 @@ export default function App() {
                       mergeProject(copy);
                       setPreview(undefined);
                       navigate("home", copy.id);
-                      notify("已创建示例副本，开始你的新创作");
+                      notify(t("Example copied. Start creating your own game."));
                     } catch (error) {
                       notify((error as Error).message);
                     } finally {
@@ -815,22 +800,19 @@ export default function App() {
           className="button primary new-project"
           onClick={() => setNewModal(true)}
         >
-          <Plus size={18} />
-          新建项目<kbd>⌘ N</kbd>
+          <Plus size={18} />{t("New project")}<kbd>⌘ N</kbd>
         </button>
         <button className="agent-link" onClick={() => setNewModal(true)}>
-          <DirectorIcon size={17} />
-          创作画布
-        </button>
+          <DirectorIcon size={17} />{t("Creative canvas")}</button>
         <div className="sidebar-rule" />
         <nav>
           {(
             [
-              { id: "home", label: "首页", icon: Home },
-              { id: "projects", label: "项目", icon: FolderOpen },
-              { id: "assets", label: "资产", icon: AssetLibraryIcon },
-              { id: "templates", label: "工作流模板", icon: Blocks },
-              { id: "history", label: "生成记录", icon: HistoryIcon },
+              { id: "home", label: t("Home"), icon: Home },
+              { id: "projects", label: t("Projects"), icon: FolderOpen },
+              { id: "assets", label: t("Assets"), icon: AssetLibraryIcon },
+              { id: "templates", label: t("Workflows"), icon: Blocks },
+              { id: "history", label: t("Generation history"), icon: HistoryIcon },
             ] as { id: Page; label: string; icon: LucideIcon }[]
           ).map(({ id, label, icon: Icon }) => (
             <button
@@ -849,20 +831,19 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="sidebar-caption">开始创作</div>
+        <div className="sidebar-caption">{t("Create")}</div>
         <button
           className={clsx("nav-item", route.page === "guide" && "active")}
           onClick={() => navigate("guide")}
         >
-          <BookOpen size={18} />
-          创作指南<span className="link-tag">入门</span>
+          <BookOpen size={18} />{t("Getting started")}<span className="link-tag">{t("Guide")}</span>
         </button>
         <div className="sidebar-bottom">
           <div className="sidebar-card">
             <span className="card-orb" />
             <div>
-              <strong>你的创意，现在可玩</strong>
-              <p>描述 · 生成 · 迭代 · 导出</p>
+              <strong>{t("Your ideas, ready to play")}</strong>
+              <p>{t("Describe · Generate · Iterate · Export")}</p>
             </div>
             <ArrowUpRight size={15} />
           </div>
@@ -870,9 +851,7 @@ export default function App() {
             className={clsx("nav-item", route.page === "settings" && "active")}
             onClick={() => navigate("settings")}
           >
-            <Settings2 size={18} />
-            设置与连接
-            <span
+            <Settings2 size={18} />{t("Settings")}<span
               className={clsx(
                 "connection-dot",
                 health?.codex.available &&
@@ -884,7 +863,7 @@ export default function App() {
           <div className="local-profile">
             <div className="avatar">G</div>
             <div>
-              <strong>本地创作空间</strong>
+              <strong>{t("Creative workspace")}</strong>
               <span>Codex CLI · gpt-6.1-sol</span>
             </div>
             <Monitor size={15} />
@@ -894,7 +873,7 @@ export default function App() {
       {mobileNav && (
         <button
           className="nav-backdrop"
-          aria-label="关闭导航"
+          aria-label={t("Close navigation")}
           onClick={() => setMobileNav(false)}
         />
       )}
@@ -903,30 +882,30 @@ export default function App() {
           <div>
             <IconButton
               icon={Menu}
-              label="打开导航"
+              label={t("Open navigation")}
               className="mobile-menu"
               onClick={() => setMobileNav(true)}
             />
-            <span className="breadcrumb">
-              创作空间 <ChevronRight size={13} />
+            <span className="breadcrumb">{t("Workspace")}{' '}<ChevronRight size={13} />
             </span>
             <strong>
               {
                 (
                   {
-                    home: "工作台",
-                    projects: "我的项目",
-                    assets: "资产管理",
-                    templates: "工作流模板",
-                    history: "生成记录",
-                    settings: "设置与连接",
-                    guide: "创作指南",
+                    home: t("Dashboard"),
+                    projects: t("My projects"),
+                    assets: t("Asset library"),
+                    templates: t("Workflows"),
+                    history: t("Generation history"),
+                    settings: t("Settings"),
+                    guide: t("Getting started"),
                   } as Record<Page, string>
                 )[route.page]
               }
             </strong>
           </div>
           <div className="header-status">
+            <LanguageSwitch />
             <span
               className={clsx(
                 "connection-dot",
@@ -937,8 +916,8 @@ export default function App() {
             />
             <span>
               {health?.codex.available && health?.codex.authenticated
-                ? "Codex CLI 已连接"
-                : "检查模型连接"}
+                ? t("Generation service connected")
+                : t("Check connection")}
             </span>
             <span className="model-pill">
               <Cpu size={13} />
@@ -950,25 +929,21 @@ export default function App() {
         {error ? (
           <div className="load-error">
             <AlertCircle size={30} />
-            <h2>暂时无法连接本地服务</h2>
+            <h2>{t("Unable to connect to the service.")}</h2>
             <p>{error}</p>
-            <button className="button primary" onClick={() => void reload()}>
-              重新连接
-            </button>
+            <button className="button primary" onClick={() => void reload()}>{t("Reconnect")}</button>
           </div>
         ) : loading ? (
           <div className="loading-page">
             <Loader2 size={30} className="spin" />
-            <span>正在打开创作空间…</span>
+            <span>{t("Opening your workspace…")}</span>
           </div>
         ) : route.projectId && !current ? (
           <Empty
-            title="未找到该项目"
-            description="项目可能已删除，或页面地址有误。"
+            title={t("Project not found")}
+            description={t("The project may have been deleted or the link may be incorrect.")}
           >
-            <button className="button" onClick={() => navigate("projects")}>
-              返回项目
-            </button>
+            <button className="button" onClick={() => navigate("projects")}>{t("Back to projects")}</button>
           </Empty>
         ) : route.page === "home" ? (
           <HomePage {...context} onNew={() => setNewModal(true)} />
@@ -1050,12 +1025,10 @@ function HomePage({
         <div className="create-symbol">
           <Plus size={31} strokeWidth={1.7} />
         </div>
-        <strong>新建画布创作</strong>
-        <span>从一个灵感，开始一款游戏</span>
+        <strong>{t("Create a canvas")}</strong>
+        <span>{t("An idea is the start of your next game")}</span>
         <div className="canvas-corner">
-          <WorkflowIcon size={16} />
-          无限画布 · AI 协作
-        </div>
+          <WorkflowIcon size={16} />{t("Infinite canvas · AI collaboration")}</div>
       </button>
       <div
         className="quick-tools"
@@ -1063,24 +1036,22 @@ function HomePage({
           { "--tool-count": Math.min(8, templates.length) } as CSSProperties
         }
       >
-        {templates.slice(0, 8).map((t) => {
-          const Icon = genreIcons[t.genre || ""] || GameCanvasIcon;
+        {templates.slice(0, 8).map((template) => {
+          const Icon = genreIcons[template.genre || ""] || GameCanvasIcon;
           return (
-            <button key={t.id} onClick={() => void create(t)}>
+            <button key={template.id} onClick={() => void create(template)}>
               <span>
                 <Icon size={26} strokeWidth={1.45} />
               </span>
-              <strong>{t.name}</strong>
+              <strong>{template.name}</strong>
             </button>
           );
         })}
       </div>
       <div className="section-heading">
-        <h2>
-          最近项目 <span>{recent.length.toString().padStart(2, "0")}</span>
+        <h2>{t("Recent projects")}{' '}<span>{recent.length.toString().padStart(2, "0")}</span>
         </h2>
-        <button onClick={() => navigate("projects")}>
-          查看全部 <ChevronRight size={14} />
+        <button onClick={() => navigate("projects")}>{t("View all")}{' '}<ChevronRight size={14} />
         </button>
       </div>
       {recent.length ? (
@@ -1101,17 +1072,16 @@ function HomePage({
             <Plus size={24} />
           </span>
           <div>
-            <strong>你的第一个游戏，始于这里</strong>
-            <p>创建项目，让 AI 帮你实现灵感</p>
+            <strong>{t("Your first game starts here")}</strong>
+            <p>{t("Create a project and bring your idea to life")}</p>
           </div>
           <ArrowRight size={18} />
         </button>
       )}
       <div className="section-heading">
-        <h2>灵感即刻开玩</h2>
-        <span className="section-sub">从可玩的作品，找到下一个创作方向</span>
-        <button onClick={() => navigate("templates")}>
-          探索模板 <ChevronRight size={14} />
+        <h2>{t("Play and explore")}</h2>
+        <span className="section-sub">{t("Find your next direction in playable examples")}</span>
+        <button onClick={() => navigate("templates")}>{t("Explore templates")}{' '}<ChevronRight size={14} />
         </button>
       </div>
       <div
@@ -1153,55 +1123,50 @@ function HomePage({
                     <Play size={21} fill="currentColor" />
                   </div>
                   <span className="showcase-badge">
-                    <GameCanvasIcon size={11} />
-                    可玩示例
-                  </span>
+                    <GameCanvasIcon size={11} />{t("Playable example")}</span>
                 </div>
                 <div className="showcase-info">
                   <strong>{p.name}</strong>
                   <span>
-                    {genreNames[String(p.settings?.genre)] || "HTML5 游戏"}
+                    {genreNames[String(p.settings?.genre)] || t("HTML5 game")}
                     <ArrowUpRight size={14} />
                   </span>
                 </div>
               </button>
             ))
-          : templates.slice(0, 4).map((t, i) => (
+          : templates.slice(0, 4).map((template, i) => (
               <button
                 className="showcase-card"
-                key={t.id}
-                onClick={() => void create(t)}
+                key={template.id}
+                onClick={() => void create(template)}
               >
                 <Cover
                   genre={
-                    t.genre ||
+                    template.genre ||
                     ["shooter", "platformer", "puzzle", "breakout"][i]
                   }
-                  name={t.name}
+                  name={template.name}
                 />
                 <div className="showcase-info">
-                  <strong>{t.name}</strong>
-                  <span>
-                    使用模板
-                    <ArrowUpRight size={14} />
+                  <strong>{template.name}</strong>
+                  <span>{t("Use template")}<ArrowUpRight size={14} />
                   </span>
                 </div>
               </button>
             ))}
       </div>
       <div className="section-heading">
-        <h2>精选工作流</h2>
-        <span className="section-sub">把创作方法，变成你的起点</span>
-        <button onClick={() => navigate("templates")}>
-          全部工作流 <ChevronRight size={14} />
+        <h2>{t("Featured workflows")}</h2>
+        <span className="section-sub">{t("Start with a complete creative workflow")}</span>
+        <button onClick={() => navigate("templates")}>{t("All workflows")}{' '}<ChevronRight size={14} />
         </button>
       </div>
       <div className="workflow-grid">
-        {templates.slice(0, 3).map((t, i) => (
+        {templates.slice(0, 3).map((template, i) => (
           <button
             className="workflow-card"
-            key={t.id}
-            onClick={() => void create(t)}
+            key={template.id}
+            onClick={() => void create(template)}
           >
             <div className="workflow-art">
               <span>
@@ -1217,17 +1182,16 @@ function HomePage({
               </span>
               <small>0{i + 1}</small>
             </div>
-            <h3>{t.name}</h3>
-            <p>{t.description}</p>
-            <span className="workflow-use">
-              使用工作流 <ArrowUpRight size={14} />
+            <h3>{template.name}</h3>
+            <p>{template.description}</p>
+            <span className="workflow-use">{t("Use workflow")}{' '}<ArrowUpRight size={14} />
             </span>
           </button>
         ))}
       </div>
       <footer className="page-footer">
-        <span>GameStudio · 为你的创意留一块画布</span>
-        <span>项目与作品保存在你的电脑</span>
+        <span>{t("GameStudio · A canvas for your next game")}</span>
+        <span>{t("Projects and assets stay in your workspace")}</span>
       </footer>
     </div>
   );
@@ -1251,40 +1215,40 @@ function ProjectCard({
         <div className="project-details">
           <strong>{p.name}</strong>
           <p>
-            {date(p.updatedAt)} 更新 <span>{p.versions.length} 个版本</span>
+            {date(p.updatedAt)}{' '}{t("Updated")}{' '}<span>{p.versions.length}{' '}{t("versions")}</span>
           </p>
         </div>
       </button>
       <div className="project-menu">
         <IconButton
           icon={MoreHorizontal}
-          label={`${p.name} 项目操作`}
+          label={t("Actions for {0}", {"0": p.name})}
           onClick={() => setMenu((v) => !v)}
         />
         {menu && (
           <>
             <button
               className="menu-dismiss"
-              aria-label="关闭菜单"
+              aria-label={t("Close menu")}
               onClick={() => setMenu(false)}
             />
             <div className="dropdown">
               {(p.status === "trashed"
                 ? [
-                    ["restore", "恢复项目", RotateCcw],
-                    ["permanent", "彻底删除", Trash2],
+                    ["restore", t("Restore project"), RotateCcw],
+                    ["permanent", t("Delete permanently"), Trash2],
                   ]
                 : p.status === "archived"
                   ? [
-                      ["restore", "取消归档", RotateCcw],
-                      ["clone", "创建副本", Copy],
-                      ["trash", "移入回收站", Trash2],
+                      ["restore", t("Unarchive"), RotateCcw],
+                      ["clone", t("Duplicate"), Copy],
+                      ["trash", t("Move to trash"), Trash2],
                     ]
                   : [
-                      ["rename", "重命名", TextNodeIcon],
-                      ["clone", "创建副本", Copy],
-                      ["archive", "归档项目", Archive],
-                      ["trash", "移入回收站", Trash2],
+                      ["rename", t("Rename"), TextNodeIcon],
+                      ["clone", t("Duplicate"), Copy],
+                      ["archive", t("Archive project"), Archive],
+                      ["trash", t("Move to trash"), Trash2],
                     ]
               ).map(([kind, label, Icon]) => {
                 const I = Icon as LucideIcon;
@@ -1332,20 +1296,18 @@ function ProjectsPage({
     <div className="page">
       <div className="page-title">
         <div>
-          <h1>我的项目</h1>
-          <p>所有灵感、画布与迭代，都在这里。</p>
+          <h1>{t("My projects")}</h1>
+          <p>{t("Your ideas, canvases and iterations in one place.")}</p>
         </div>
         <button className="button primary" onClick={onNew}>
-          <Plus size={16} />
-          新建项目
-        </button>
+          <Plus size={16} />{t("New project")}</button>
       </div>
       <div className="list-toolbar">
         <div className="tabs">
           {[
-            ["active", "全部项目"],
-            ["archived", "已归档"],
-            ["trashed", "回收站"],
+            ["active", t("All projects")],
+            ["archived", t("Archived")],
+            ["trashed", t("Trash")],
           ].map(([k, l]) => (
             <button
               key={k}
@@ -1360,12 +1322,12 @@ function ProjectsPage({
         <label className="search-field">
           <Search size={16} />
           <input
-            placeholder="搜索项目名称"
+            placeholder={t("Search projects")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           {search && (
-            <button aria-label="清空搜索" onClick={() => setSearch("")}>
+            <button aria-label={t("Clear search")} onClick={() => setSearch("")}>
               <X size={13} />
             </button>
           )}
@@ -1387,313 +1349,103 @@ function ProjectsPage({
           icon={filter === "trashed" ? Trash2 : FolderOpen}
           title={
             search
-              ? "没有找到匹配的项目"
+              ? t("No matching projects")
               : filter === "archived"
-                ? "还没有归档项目"
+                ? t("No archived projects")
                 : filter === "trashed"
-                  ? "回收站是空的"
-                  : "开始你的第一个项目"
+                  ? t("Trash is empty")
+                  : t("Start your first project")
           }
           description={
-            search ? "换一个关键词试试。" : "在画布里，把想法一点点变成游戏。"
+            search ? t("Try another search term.") : t("Build your game one step at a time on the canvas.")
           }
         >
           {filter === "active" && !search && (
             <button className="button primary" onClick={onNew}>
-              <Plus size={16} />
-              新建项目
-            </button>
+              <Plus size={16} />{t("New project")}</button>
           )}
         </Empty>
       )}
     </div>
   );
 }
-function TemplatesPage({
-  templates,
-  create,
-  creating,
-}: {
-  templates: Template[];
-  create: (t: Template) => Promise<void>;
-  creating: boolean;
+function TemplatesPage({ templates, create, creating }: {
+  templates: Template[]; create: (template: Template) => Promise<void>; creating: boolean;
 }) {
-  const [selected, setSelected] = useState<Template>(),
-    [filter, setFilter] = useState("全部");
-  const genres = [
-    "全部",
-    ...new Set(
-      templates.map((t) => genreNames[t.genre || ""] || t.genre || "街机"),
-    ),
-  ];
-  return (
-    <div className="page">
-      <div className="page-title">
-        <div>
-          <h1>工作流模板</h1>
-          <p>已经准备好的创作路径。选一个，加入你的想象。</p>
-        </div>
-        <span className="quiet-tag">
-          <Blocks size={14} />
-          {templates.length} 个可用模板
-        </span>
+  const { language } = useLanguage(), [selectedId, setSelectedId] = useState<string>(), [filter, setFilter] = useState('all'),
+    [materialRole, setMaterialRole] = useState<string>();
+  const localized = (template: Template): Template => ({ ...template, ...(language === 'zh' ? template.locales?.zh : {}), settings: { ...template.settings, language: language === 'zh' ? 'zh-CN' : 'en' } });
+  const selected = templates.find(template => template.id === selectedId), display = selected && localized(selected);
+  const genres = ['all', ...new Set(templates.map(template => template.genre || 'custom'))];
+  return <div className="page workflow-library-page">
+    <div className="page-title"><div><h1>{t('Workflows')}</h1><p>{t('Explore complete material kits. Open a workflow to review its brief, characters, scenes, props, and sound direction.')}</p></div><span className="quiet-tag"><WorkflowIcon size={14}/>{t('{count} workflows', { count: templates.length })}</span></div>
+    <div className="filter-chips">{genres.map(genre => <button key={genre} className={filter === genre ? 'active' : ''} onClick={() => setFilter(genre)}>{genre === 'all' ? t('All workflows') : genreNames[genre] || genre}</button>)}</div>
+    <div className="template-grid">{templates.filter(template => filter === 'all' || template.genre === filter).map(template => { const item = localized(template); return <button className="template-card" key={item.id} onClick={() => { setSelectedId(item.id); setMaterialRole(undefined); }}>
+      <Cover genre={item.genre} name={item.name}/><div><span className="tiny-badge">{genreNames[item.genre || ''] || t('Custom')}</span><h3>{item.name}</h3><p>{item.description}</p>
+        <div className="workflow-material-strip">{['character','scene','prop','audio'].map(role => { const Icon = nodeRoles[role].icon; return <span key={role} title={item.materials?.[role]?.title || t(materialCategoryLabels[role as keyof typeof materialCategoryLabels])}><Icon size={14}/></span>; })}<small>{t('6 linked nodes')}</small></div>
+        <span className="workflow-use">{t('Explore materials')}<ArrowUpRight size={14}/></span></div>
+    </button>; })}</div>
+    {display && <Modal title={display.name} wide onClose={() => { setSelectedId(undefined); setMaterialRole(undefined); }}>
+      <div className="template-kit-heading"><Cover genre={display.genre} name={display.name}/><div><p>{display.description}</p><div className="template-tags">{display.tags?.map(tag => <span key={tag}>{t(tag)}</span>)}<span>{t('6 linked nodes')}</span>{display.estimatedMinutes && <span>{t('{count} min first draft', { count: display.estimatedMinutes })}</span>}</div><ol className="template-step-list">{(display.steps || ['Review the design direction','Bind your reference files','Generate and playtest']).map(step => <li key={step}>{t(step)}</li>)}</ol></div></div>
+      <div className="template-material-catalog" aria-label={t('Workflow material kit')}>
+        {['brief','character','scene','prop','audio','game'].map(role => { const material = display.materials?.[role], title = role === 'brief' ? t('Creative brief') : role === 'game' ? display.output?.title || t('Game output') : material?.title || t(materialCategoryLabels[role as keyof typeof materialCategoryLabels]); const content = role === 'brief' ? display.prompt : role === 'game' ? display.output?.content : material?.content; const Icon = nodeRoles[role].icon; return <button className={clsx('template-material-card', materialRole === role && 'active')} key={role} onClick={() => setMaterialRole(role)}><div className="template-material-cover"><Icon size={30}/><small>{t(role === 'brief' ? 'Brief' : role === 'game' ? 'Game' : materialCategoryLabels[role as keyof typeof materialCategoryLabels])}</small></div><strong>{title}</strong><p>{content || t('Define this material before generating.')}</p><span>{t('View direction')}<ChevronRight size={12}/></span></button>; })}
       </div>
-      <div className="filter-chips">
-        {genres.map((g) => (
-          <button
-            className={filter === g ? "active" : ""}
-            key={g}
-            onClick={() => setFilter(g)}
-          >
-            {g}
-          </button>
-        ))}
-      </div>
-      <div className="template-grid">
-        {templates
-          .filter(
-            (t) =>
-              filter === "全部" ||
-              (genreNames[t.genre || ""] || t.genre || "街机") === filter,
-          )
-          .map((t) => (
-            <button
-              className="template-card"
-              key={t.id}
-              onClick={() => setSelected(t)}
-            >
-              <Cover genre={t.genre} name={t.name} />
-              <div>
-                <span className="tiny-badge">
-                  {genreNames[t.genre || ""] || "游戏工作流"}
-                </span>
-                <h3>{t.name}</h3>
-                <p>{t.description}</p>
-                <span className="workflow-use">
-                  查看工作流 <ArrowUpRight size={14} />
-                </span>
-              </div>
-            </button>
-          ))}
-      </div>
-      {selected && (
-        <Modal
-          title={selected.name}
-          wide
-          onClose={() => setSelected(undefined)}
-        >
-          <div className="template-detail">
-            <Cover genre={selected.genre} name={selected.name} />
-            <div>
-              <p className="muted">{selected.description}</p>
-              <div className="workflow-steps">
-                <span>
-                  <TextNodeIcon size={17} />
-                  需求与玩法
-                </span>
-                <ChevronRight size={15} />
-                <span>
-                  <DirectorIcon size={17} />
-                  Codex 生成
-                </span>
-                <ChevronRight size={15} />
-                <span>
-                  <GameCanvasIcon size={17} />
-                  试玩与迭代
-                </span>
-              </div>
-              <label className="field-label">
-                模板提示词
-                <div className="prompt-preview">{selected.prompt}</div>
-              </label>
-            </div>
-          </div>
-          <div className="modal-actions">
-            <button className="button" onClick={() => setSelected(undefined)}>
-              返回
-            </button>
-            <button
-              className="button primary"
-              disabled={creating}
-              onClick={() => void create(selected)}
-            >
-              {creating ? (
-                <Loader2 className="spin" size={16} />
-              ) : (
-                <Plus size={16} />
-              )}
-              使用模板创建项目
-            </button>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
+      {materialRole && <div className="template-material-detail" aria-live="polite"><div><h3>{materialRole === 'brief' ? t('Creative brief') : materialRole === 'game' ? display.output?.title : display.materials?.[materialRole]?.title}</h3><button className="icon-button" aria-label={t('Close material details')} onClick={() => setMaterialRole(undefined)}><X size={16}/></button></div><p>{materialRole === 'brief' ? display.prompt : materialRole === 'game' ? display.output?.content : display.materials?.[materialRole]?.content}</p><dl>{Object.entries(display.materials?.[materialRole]?.specifications || {}).map(([key,value]) => <div key={key}><dt>{t(key.charAt(0).toUpperCase()+key.slice(1))}</dt><dd>{value}</dd></div>)}</dl><small>{t('Design directions are ready to edit. Upload your own reference files after creating the project.')}</small></div>}
+      <div className="modal-actions"><button className="button" onClick={() => setSelectedId(undefined)}>{t('Back')}</button><button className="button primary" disabled={creating} onClick={() => void create(display)}>{creating ? <Loader2 className="spin" size={16}/> : <Plus size={16}/>} {t('Create with this workflow')}</button></div>
+    </Modal>}
+  </div>;
 }
-function AssetsPage({
-  projects,
-  notify,
-  mergeProject,
-  openProject,
-}: {
-  projects: Project[];
-  notify: (s: string) => void;
-  mergeProject: (p: Project) => void;
-  openProject: (p: Project) => Promise<void>;
+function AssetsPage({ projects, notify, mergeProject, openProject }: {
+  projects: Project[]; notify: (s: string) => void; mergeProject: (p: Project) => void; openProject: (p: Project) => Promise<void>;
 }) {
-  const [query, setQuery] = useState(""),
-    [projectId, setProjectId] = useState("all"),
-    [uploading, setUploading] = useState(false),
-    [view, setView] = useState<Asset>();
-  const input = useRef<HTMLInputElement>(null);
-  const active = projects.filter((p) => p.status === "active");
-  const assets = active
-    .flatMap((p) => p.assets.map((a) => ({ ...a, project: p })))
-    .filter(
-      (a) =>
-        (projectId === "all" || a.project.id === projectId) &&
-        a.name.toLowerCase().includes(query.toLowerCase()),
-    );
+  useLanguage();
+  const [query, setQuery] = useState(""), [projectId, setProjectId] = useState("all"),
+    [category, setCategory] = useState("all"), [kind, setKind] = useState("all"),
+    [uploading, setUploading] = useState(false), [view, setView] = useState<AssetCatalogItem>();
+  const input = useRef<HTMLInputElement>(null), active = projects.filter(p => p.status === "active");
+  const catalog = buildAssetCatalog(projects), scoped = filterAssetCatalog(catalog, { projectId, kind, query });
+  const assets = filterAssetCatalog(catalog, { projectId, category, kind, query });
   const upload = async (files: FileList | null) => {
     if (!files?.length) return;
-    if (projectId === "all") {
-      notify("请先选择上传素材所属的项目");
-      return;
-    }
+    if (projectId === "all") { notify(t("Select a project before uploading files.")); return; }
     setUploading(true);
     try {
-      for (const f of Array.from(files)) await api.upload(projectId, f);
-      mergeProject(await api.project(projectId));
-      notify("素材上传完成");
-    } catch (e) {
-      notify((e as Error).message);
-    } finally {
-      setUploading(false);
-      if (input.current) input.current.value = "";
-    }
+      for (const file of Array.from(files)) await api.upload(projectId, file);
+      mergeProject(await api.project(projectId)); notify(t("Materials uploaded."));
+    } catch (error) { notify((error as Error).message); }
+    finally { setUploading(false); if (input.current) input.current.value = ""; }
   };
-  return (
-    <div className="page">
-      <div className="page-title">
-        <div>
-          <h1>资产管理</h1>
-          <p>参考图、音频和素材，与项目一起保持井然有序。</p>
-        </div>
-        <button
-          className="button primary"
-          disabled={uploading || !active.length || projectId === "all"}
-          title={projectId === "all" ? "请先选择素材所属的项目" : "上传素材"}
-          onClick={() => input.current?.click()}
-        >
-          {uploading ? (
-            <Loader2 size={16} className="spin" />
-          ) : (
-            <Upload size={16} />
-          )}
-          上传素材
-        </button>
-        <input
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif,image/avif,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/mp4,text/plain,application/json"
-          multiple
-          hidden
-          ref={input}
-          onChange={(e) => void upload(e.target.files)}
-        />
-      </div>
-      <div className="list-toolbar">
-        <select
-          aria-label="素材所属项目"
-          value={projectId}
-          onChange={(e) => setProjectId(e.target.value)}
-        >
-          <option value="all">全部项目 · 选择项目后上传</option>
-          {active.map((p) => (
-            <option value={p.id} key={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <label className="search-field">
-          <Search size={16} />
-          <input
-            placeholder="搜索素材"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-      </div>
-      {assets.length ? (
-        <div className="asset-grid">
-          {assets.map((a) => (
-            <div className="asset-card" key={a.id}>
-              <button className="asset-preview" onClick={() => setView(a)}>
-                {a.mimeType.startsWith("image/") ? (
-                  <img src={a.url} alt={a.name} />
-                ) : a.mimeType.startsWith("audio/") ? (
-                  <Volume2 size={35} />
-                ) : a.mimeType.startsWith("video/") ? (
-                  <Play size={35} />
-                ) : (
-                  <TextNodeIcon size={35} />
-                )}
-              </button>
-              <strong>{a.name}</strong>
-              <button
-                className="asset-project"
-                onClick={() => void openProject(a.project)}
-              >
-                {a.project.name}
-                <ArrowUpRight size={12} />
-              </button>
-              <div className="asset-meta">
-                <span>{(a.size / 1024).toFixed(0)} KB</span>
-                <IconButton
-                  icon={Trash2}
-                  label={`删除素材 ${a.name}`}
-                  onClick={() => {
-                    void (async () => {
-                      try {
-                        await api.removeAsset(a.project.id, a.id);
-                        mergeProject(await api.project(a.project.id));
-                        notify("素材已删除");
-                      } catch (e) {
-                        notify((e as Error).message);
-                      }
-                    })();
-                  }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <Empty
-          icon={AssetLibraryIcon}
-          title={query ? "没有匹配的素材" : "为创作加入参考素材"}
-          description="选择一个项目，再上传图片、音频或文本文件。在画布里通过 @ 引用它们。"
-        />
-      )}
-      {view && (
-        <Modal title={view.name} wide onClose={() => setView(undefined)}>
-          <div className="asset-modal-preview">
-            {view.mimeType.startsWith("image/") ? (
-              <img src={view.url} alt={view.name} />
-            ) : view.mimeType.startsWith("audio/") ? (
-              <audio controls src={view.url} />
-            ) : view.mimeType.startsWith("video/") ? (
-              <video controls src={view.url} />
-            ) : (
-              <a className="button" href={view.url} download={view.name}>
-                <Download size={16} />
-                下载文件
-              </a>
-            )}
-          </div>
-        </Modal>
-      )}
+  return <div className="page material-library-page">
+    <div className="page-title"><div><h1>{t("Asset library")}</h1><p>{t("Find the characters, scenes, props, and sounds used across your projects.")}</p></div>
+      <button className="button primary" disabled={uploading || !active.length || projectId === "all"} title={projectId === "all" ? t("Select a project first") : t("Upload materials")} onClick={() => input.current?.click()}>
+        {uploading ? <Loader2 size={16} className="spin" /> : <Upload size={16} />}{t("Upload materials")}</button>
+      <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/mp4,text/plain,application/json" multiple hidden ref={input} onChange={e => void upload(e.target.files)} />
     </div>
-  );
+    <div className="list-toolbar"><select aria-label={t("Material project")} value={projectId} onChange={e => setProjectId(e.target.value)}>
+      <option value="all">{t("All projects · Select one to upload")}</option>{active.map(project => <option value={project.id} key={project.id}>{project.name}</option>)}</select>
+      <label className="search-field"><Search size={16} /><input placeholder={t("Search files, materials, or projects")} value={query} onChange={e => setQuery(e.target.value)} /></label>
+      <select aria-label={t("File type")} value={kind} onChange={e => setKind(e.target.value)}>{[['all','All file types'],['image','Images'],['audio','Audio files'],['video','Videos'],['document','Documents']].map(([value,label]) => <option key={value} value={value}>{t(label)}</option>)}</select>
+    </div>
+    <div className="filter-chips material-category-filters" aria-label={t("Material categories")}>
+      <button className={category === 'all' ? 'active' : ''} onClick={() => setCategory('all')}>{t("All materials")}<small>{scoped.length}</small></button>
+      {materialCategories.map(role => { const Icon = nodeRoles[role === 'reference' ? 'asset' : role]?.icon || AssetLibraryIcon; return <button key={role} className={category === role ? 'active' : ''} onClick={() => setCategory(role)}><Icon size={14}/>{t(materialCategoryLabels[role])}<small>{scoped.filter(item => item.categories.includes(role)).length}</small></button>; })}
+    </div>
+    <p className="library-result-count">{t("{count} files", { count: assets.length })} · {t("Shared files appear once; category counts may overlap.")}</p>
+    {assets.length ? <div className="asset-grid">{assets.map(asset => <div className="asset-card" key={`${asset.project.id}:${asset.id}`}>
+      <button className="asset-preview" aria-label={t("View material {name}", { name: asset.name })} onClick={() => setView(asset)}>
+        {asset.mimeType.startsWith("image/") ? <img src={asset.url} alt={asset.name} loading="lazy"/> : asset.mimeType.startsWith("audio/") ? <AudioIcon size={35}/> : asset.mimeType.startsWith("video/") ? <Play size={35}/> : <TextNodeIcon size={35}/>}
+      </button><strong>{asset.name}</strong>
+      <div className="asset-category-badges">{asset.categories.map(role => <span key={role}>{t(materialCategoryLabels[role])}</span>)}</div>
+      <button className="asset-project" onClick={() => void openProject(asset.project)}>{asset.project.name}<ArrowUpRight size={12}/></button>
+      {asset.nodes.length > 0 && <p className="asset-bindings" title={asset.nodes.map(titleOf).join(' · ')}>{asset.nodes.map(titleOf).join(' · ')}</p>}
+      <div className="asset-meta"><span>{(asset.size / 1024).toFixed(0)} KB</span><IconButton icon={Trash2} label={t("Delete material {name}", { name: asset.name })} onClick={() => {
+        void (async () => { try { await api.removeAsset(asset.project.id, asset.id); mergeProject(await api.project(asset.project.id)); if (view?.id === asset.id && view.project.id === asset.project.id) setView(undefined); notify(t("Material deleted.")); } catch (error) { notify((error as Error).message); } })();
+      }}/></div></div>)}</div> : <Empty icon={AssetLibraryIcon} title={query || category !== 'all' || kind !== 'all' ? t("No matching materials") : t("Add your first materials")} description={t("Select a project and upload images, audio, or documents. Bind files to materials in the workspace.")}/>}
+    {view && <Modal title={view.name} wide onClose={() => setView(undefined)}>
+      <div className="asset-modal-preview">{view.mimeType.startsWith('image/') ? <img src={view.url} alt={view.name}/> : view.mimeType.startsWith('audio/') ? <audio controls src={view.url}/> : view.mimeType.startsWith('video/') ? <video controls src={view.url}/> : <a className="button" href={view.url} download={view.name}><Download size={16}/>{t("Download file")}</a>}</div>
+      <div className="asset-detail-bindings"><span>{t("Used in materials")}</span>{view.nodes.length ? view.nodes.map(node => <span key={node.id}>{titleOf(node)} · {t(materialCategoryLabels[(node.type && materialCategories.includes(node.type as typeof materialCategories[number]) ? node.type : 'reference') as typeof materialCategories[number]])}</span>) : <p>{t("Unassigned. Bind this file to a material in its project workspace.")}</p>}<button className="button" onClick={() => void openProject(view.project)}><ArrowUpRight size={14}/>{t("Open project")}</button></div>
+    </Modal>}
+  </div>;
 }
 function HistoryPage({
   projects,
@@ -1720,8 +1472,8 @@ function HistoryPage({
     <div className="page">
       <div className="page-title">
         <div>
-          <h1>生成记录</h1>
-          <p>每次尝试，都是作品的下一步。</p>
+          <h1>{t("Generation history")}</h1>
+          <p>{t("Each iteration moves your game forward.")}</p>
         </div>
         <span className="quiet-tag">
           <Terminal size={14} />
@@ -1730,11 +1482,11 @@ function HistoryPage({
       </div>
       <div className="filter-chips">
         {[
-          ["all", "全部记录"],
-          ["active", "进行中"],
-          ["succeeded", "已完成"],
-          ["failed", "失败"],
-          ["cancelled", "已取消"],
+          ["all", t("All jobs")],
+          ["active", t("In progress")],
+          ["succeeded", t("Completed")],
+          ["failed", t("Failed")],
+          ["cancelled", t("Canceled")],
         ].map(([key, label]) => (
           <button
             key={key}
@@ -1768,7 +1520,7 @@ function HistoryPage({
                 >
                   <strong>{j.prompt}</strong>
                   <p>
-                    {p?.name || "已删除项目"} · {time(j.createdAt)}
+                    {p?.name || t("Deleted project")} · {time(j.createdAt)}
                   </p>
                 </button>
                 <span className={clsx("status-tag", j.status)}>
@@ -1780,14 +1532,12 @@ function HistoryPage({
                     onClick={() => {
                       void api.cancel(j.id).catch((e) => notify(e.message));
                     }}
-                  >
-                    取消
-                  </button>
+                  >{t("Cancel")}</button>
                 ) : (
                   p && (
                     <IconButton
                       icon={ArrowUpRight}
-                      label="打开项目"
+                      label={t("Open project")}
                       onClick={() => void openProject(p)}
                     />
                   )
@@ -1799,12 +1549,12 @@ function HistoryPage({
       ) : (
         <Empty
           icon={HistoryIcon}
-          title="还没有生成记录"
-          description="在项目的 AI 导演里提交想法后，会在这里看到完整进度。"
+          title={t("No generation history yet")}
+          description={t("Submit a request in the director to see its progress here.")}
         />
       )}
       {selected && (
-        <Modal title="生成详情" wide onClose={() => setSelectedId(undefined)}>
+        <Modal title={t("Generation details")} wide onClose={() => setSelectedId(undefined)}>
           <div className="job-detail">
             <span className={clsx("status-tag", selected.status)}>
               {statusNames[selected.status]}
@@ -1849,7 +1599,7 @@ function SettingsPage({
     setBusy(true);
     try {
       onSettings(await api.settings(local));
-      notify("默认设置已保存");
+      notify(t("Default settings saved."));
     } catch (e) {
       notify((e as Error).message);
     } finally {
@@ -1860,8 +1610,8 @@ function SettingsPage({
     <div className="page settings-page">
       <div className="page-title">
         <div>
-          <h1>设置与连接</h1>
-          <p>让创作环境，适合你的工作方式。</p>
+          <h1>{t("Settings")}</h1>
+          <p>{t("Set up your preferred creative environment.")}</p>
         </div>
       </div>
       <section className="settings-card">
@@ -1870,8 +1620,8 @@ function SettingsPage({
             <Terminal size={24} />
           </div>
           <div>
-            <h2>本地 Codex CLI</h2>
-            <p>通过本机已登录的 Codex，生成与修改游戏。</p>
+            <h2>{t("Generation runtime")}</h2>
+            <p>{t("Generate and iterate through the connected Codex runtime.")}</p>
           </div>
           <span
             className={clsx(
@@ -1882,36 +1632,33 @@ function SettingsPage({
             )}
           >
             {health?.codex.authenticated && health?.codex.available
-              ? "连接正常"
-              : "需要连接"}
+              ? t("Connected")
+              : t("Connection required")}
           </span>
         </div>
         <div className="settings-row">
-          <span>生成模型</span>
+          <span>{t("Model")}</span>
           <strong>
-            gpt-6.1-sol <span className="tiny-badge">固定</span>
+            gpt-6.1-sol <span className="tiny-badge">{t("Fixed")}</span>
           </strong>
         </div>
         <div className="settings-row">
-          <span>CLI 状态</span>
+          <span>{t("Runtime status")}</span>
           <strong>
-            {health?.codex.available ? "已安装" : "未检测到"} ·{" "}
-            {health?.codex.version || "未知版本"}
+            {health?.codex.available ? t("Installed") : t("Not detected")} ·{" "}
+            {health?.codex.version || t("Unknown version")}
           </strong>
         </div>
         <div className="settings-row">
-          <span>登录状态</span>
-          <strong>{health?.codex.authenticated ? "已登录" : "未登录"}</strong>
+          <span>{t("Authentication")}</span>
+          <strong>{health?.codex.authenticated ? t("Signed in") : t("Signed out")}</strong>
         </div>
         {!(health?.codex.authenticated && health?.codex.available) && (
           <div className="connection-instructions">
             <AlertCircle size={17} />
             <div>
-              <strong>在本机终端完成连接</strong>
-              <p>
-                安装后执行 <code>npm exec -- codex login</code>
-                ，再点击检查连接。
-              </p>
+              <strong>{t("Connect the runtime in the server terminal")}</strong>
+              <p>{t("After installation, run")}{' '}<code>npm exec -- codex login</code>{t(", then check the connection.")}</p>
               {health?.codex.error && <small>{health.codex.error}</small>}
             </div>
           </div>
@@ -1922,22 +1669,18 @@ function SettingsPage({
           onClick={() => {
             setBusy(true);
             void refresh()
-              .then(() => notify("连接状态已更新"))
+              .then(() => notify(t("Connection status updated.")))
               .catch((e) => notify(e.message))
               .finally(() => setBusy(false));
           }}
         >
-          <RefreshCw size={16} className={busy ? "spin" : ""} />
-          检查连接
-        </button>
+          <RefreshCw size={16} className={busy ? "spin" : ""} />{t("Check connection")}</button>
       </section>
       <section className="settings-card">
-        <h2>默认创作设置</h2>
-        <p className="muted">新项目将使用以下偏好。项目内仍可以独立调整。</p>
+        <h2>{t("Default preferences")}</h2>
+        <p className="muted">{t("New projects use these preferences. Each project can override them.")}</p>
         <div className="settings-form">
-          <label className="field-label">
-            画面比例
-            <select
+          <label className="field-label">{t("Aspect ratio")}<select
               value={String(local.aspectRatio || "16:9")}
               onChange={(e) =>
                 setLocal((s) => ({ ...s, aspectRatio: e.target.value }))
@@ -1949,32 +1692,28 @@ function SettingsPage({
               <option>9:16</option>
             </select>
           </label>
-          <label className="field-label">
-            视觉风格
-            <select
+          <label className="field-label">{t("Visual style")}<select
               value={String(local.visualStyle || "neon")}
               onChange={(e) =>
                 setLocal((s) => ({ ...s, visualStyle: e.target.value }))
               }
             >
-              <option value="neon">霓虹未来</option>
-              <option value="pixel">复古像素</option>
-              <option value="minimal">简约几何</option>
-              <option value="cartoon">活泼卡通</option>
-              <option value="illustration">手绘插画</option>
+              <option value="neon">{t("Neon future")}</option>
+              <option value="pixel">{t("Pixel art")}</option>
+              <option value="minimal">{t("Minimal geometry")}</option>
+              <option value="cartoon">{t("Cartoon")}</option>
+              <option value="illustration">{t("Hand-drawn")}</option>
             </select>
           </label>
-          <label className="field-label">
-            默认难度
-            <select
+          <label className="field-label">{t("Default difficulty")}<select
               value={String(local.difficulty || "normal")}
               onChange={(e) =>
                 setLocal((s) => ({ ...s, difficulty: e.target.value }))
               }
             >
-              <option value="easy">轻松</option>
-              <option value="normal">标准</option>
-              <option value="hard">挑战</option>
+              <option value="easy">{t("Easy")}</option>
+              <option value="normal">{t("Normal")}</option>
+              <option value="hard">{t("Hard")}</option>
             </select>
           </label>
           <label className="toggle-field">
@@ -1985,7 +1724,7 @@ function SettingsPage({
                 setLocal((s) => ({ ...s, sound: e.target.checked }))
               }
             />
-            <span>生成游戏音效</span>
+            <span>{t("Generate sound effects")}</span>
           </label>
         </div>
         <div className="modal-actions">
@@ -1994,9 +1733,7 @@ function SettingsPage({
             disabled={busy}
             onClick={() => void save()}
           >
-            <Save size={16} />
-            保存偏好
-          </button>
+            <Save size={16} />{t("Save preferences")}</button>
         </div>
       </section>
     </div>
@@ -2007,8 +1744,8 @@ function GuidePage({ onNew }: { onNew: () => void }) {
     <div className="page guide-page">
       <div className="page-title">
         <div>
-          <h1>从灵感，到第一局游戏</h1>
-          <p>GameStudio 的创作流程，只需要三个步骤。</p>
+          <h1>{t("From an idea to your first game")}</h1>
+          <p>{t("Create a game in three steps.")}</p>
         </div>
       </div>
       <div className="guide-grid">
@@ -2016,20 +1753,20 @@ function GuidePage({ onNew }: { onNew: () => void }) {
           {
             icon: TextNodeIcon,
             n: "01",
-            title: "把玩法说清楚",
-            text: "在需求节点写下游戏类型、操作方式、目标与视觉风格。参考图片也可以上传并加入画布。",
+            title: t("Describe the gameplay"),
+            text: t("Define the genre, controls, goals and style in the brief. Upload reference images and connect them to your canvas."),
           },
           {
             icon: DirectorIcon,
             n: "02",
-            title: "交给 AI 导演",
-            text: "输入创作要求，通过 @ 引用节点。Codex CLI 调用 gpt-6.1-sol 生成完整 HTML5 游戏，并将作品保存到本机。进度与日志实时显示。",
+            title: t("Work with the director"),
+            text: t("Describe your request and reference nodes with @. The generation service produces a complete HTML5 game and saves it to your workspace. Follow progress and logs as it runs."),
           },
           {
             icon: GameCanvasIcon,
             n: "03",
-            title: "试玩，再做得更好",
-            text: "打开游戏预览，直接体验。描述你想修改的部分，每次迭代都保留独立版本，随时回到之前的作品。",
+            title: t("Play, then improve"),
+            text: t("Try your game and describe what to change. Every iteration creates a separate version so you can return to earlier work."),
           },
         ].map(({ icon: Icon, n, title, text }) => (
           <div className="guide-card" key={n}>
@@ -2043,27 +1780,19 @@ function GuidePage({ onNew }: { onNew: () => void }) {
       <div className="guide-tip">
         <Keyboard size={22} />
         <div>
-          <strong>画布使用小技巧</strong>
-          <p>
-            拖动节点整理思路 · 从节点圆点拖出连线 · 滚轮缩放 · Delete
-            删除选中节点 · Ctrl / ⌘ + Enter 发送生成请求
-          </p>
+          <strong>{t("Canvas shortcuts")}</strong>
+          <p>{t("Drag nodes to organize · Connect node handles · Scroll to zoom · Delete removes selection · Ctrl / ⌘ + Enter submits a request")}</p>
         </div>
       </div>
       <div className="guide-tip">
         <Download size={22} />
         <div>
-          <strong>作品独立运行</strong>
-          <p>
-            导出 HTML 可直接用浏览器打开；ZIP
-            包含游戏及项目素材。代码编辑器支持手动修改，每次保存都会创建新版本。
-          </p>
+          <strong>{t("Standalone games")}</strong>
+          <p>{t("Open an exported HTML file in a browser. ZIP exports include the game and assets. Manual code edits create new versions.")}</p>
         </div>
       </div>
       <button className="button primary" onClick={onNew}>
-        <Plus size={17} />
-        开始我的第一个游戏
-      </button>
+        <Plus size={17} />{t("Create my first game")}</button>
     </div>
   );
 }
@@ -2080,6 +1809,7 @@ type NodeActions = {
   assets: Asset[];
   bindAssets: (id: string) => void;
   uploadAssets: (id: string) => void;
+  openDetails: (id: string) => void;
 };
 const NodeContext = createContext<NodeActions>({
   edit: () => {},
@@ -2093,39 +1823,37 @@ const NodeContext = createContext<NodeActions>({
   assets: [],
   bindAssets: () => {},
   uploadAssets: () => {},
+  openDetails: () => {},
 });
 const materialTypes = ["character", "scene", "prop", "audio"];
-const nodeRoles: Record<string, { label: string; icon: LucideIcon; hint: string; fields?: { key: string; label: string; placeholder: string }[] }> = {
-  brief: { label: "创作需求", icon: TextNodeIcon, hint: "玩法、操作、目标与画面风格" },
-  character: { label: "人物素材", icon: CharacterIcon, hint: "人物外观、性格与游戏能力", fields: [
-    { key: "appearance", label: "外观设定", placeholder: "服装、颜色、比例和动画风格" },
-    { key: "personality", label: "性格与行为", placeholder: "角色性格、移动与行为特点" },
-    { key: "abilities", label: "角色能力", placeholder: "操作、技能、数值与限制" },
+const nodeRoles: Record<string, { label: string; icon: LucideIcon; hint: string; fields?: { key: string; label: string; placeholder: string }[] }> = localizedLabels({
+  brief: { label: "Gameplay brief", icon: TextNodeIcon, hint: "Gameplay, controls, goals and visual style" },
+  character: { label: "Character", icon: CharacterIcon, hint: "Appearance, personality and abilities", fields: [
+    { key: "appearance", label: "Appearance", placeholder: "Clothing, colors, proportions and animation style" },
+    { key: "personality", label: "Personality and behavior", placeholder: "Personality, movement and behavior" },
+    { key: "abilities", label: "Abilities", placeholder: "Controls, skills, values and constraints" },
   ] },
-  scene: { label: "场景素材", icon: SceneIcon, hint: "环境、布局与镜头视角", fields: [
-    { key: "environment", label: "环境氛围", placeholder: "地形、光照、色彩与世界设定" },
-    { key: "layout", label: "关卡布局", placeholder: "路径、平台、障碍与出生点" },
-    { key: "camera", label: "镜头视角", placeholder: "侧视 / 俯视、跟随与缩放" },
+  scene: { label: "Scene", icon: SceneIcon, hint: "Environment, layout and camera", fields: [
+    { key: "environment", label: "Environment", placeholder: "Terrain, lighting, colors and world design" },
+    { key: "layout", label: "Level layout", placeholder: "Routes, platforms, obstacles and spawn points" },
+    { key: "camera", label: "Camera", placeholder: "Side view or overhead, follow behavior and zoom" },
   ] },
-  prop: { label: "道具素材", icon: PropIcon, hint: "道具用途、交互与规则", fields: [
-    { key: "usage", label: "道具用途", placeholder: "道具类型、外观与用途" },
-    { key: "interaction", label: "交互方式", placeholder: "拾取、使用、碰撞与效果" },
-    { key: "rules", label: "生效规则", placeholder: "数量、持续时间、冷却与得分" },
+  prop: { label: "Prop", icon: PropIcon, hint: "Purpose, interaction and rules", fields: [
+    { key: "usage", label: "Purpose", placeholder: "Type, appearance and purpose" },
+    { key: "interaction", label: "Interaction", placeholder: "Pickup, use, collisions and effects" },
+    { key: "rules", label: "Rules", placeholder: "Quantity, duration, cooldown and scoring" },
   ] },
-  audio: { label: "音频素材", icon: AudioIcon, hint: "配乐、音效与触发时机", fields: [
-    { key: "mood", label: "声音氛围", placeholder: "节奏、情绪与音乐风格" },
-    { key: "trigger", label: "触发时机", placeholder: "背景循环、跳跃、拾取与结束" },
-    { key: "mixing", label: "播放规则", placeholder: "音量、循环、淡入淡出与静音" },
+  audio: { label: "Audio", icon: AudioIcon, hint: "Music, sound effects and triggers", fields: [
+    { key: "mood", label: "Sound mood", placeholder: "Rhythm, mood and musical style" },
+    { key: "trigger", label: "Triggers", placeholder: "Background loop, jump, pickup and ending" },
+    { key: "mixing", label: "Playback", placeholder: "Volume, loops, fades and mute" },
   ] },
-  asset: { label: "参考素材", icon: AssetLibraryIcon, hint: "图片、音频或文档参考" },
-  text: { label: "文本笔记", icon: TextNodeIcon, hint: "灵感、剧情与修改说明" },
-  game: { label: "游戏生成", icon: GameCanvasIcon, hint: "整合上游素材，生成可玩游戏" },
-};
-const assetIdsOf = (data: GameNode["data"]) => Array.from(new Set([
-  ...(Array.isArray(data.assetIds) ? data.assetIds : []),
-  ...(typeof data.assetId === "string" ? [data.assetId] : []),
-]));
-const titleOf = (node: GameNode) => String(node.data.label || node.data.title || nodeRoles[node.type || "text"]?.label || "未命名节点");
+  asset: { label: "Reference", icon: AssetLibraryIcon, hint: "Image, audio or document references" },
+  text: { label: "Notes", icon: TextNodeIcon, hint: "Ideas, story and revision notes" },
+  game: { label: "Game output", icon: GameCanvasIcon, hint: "Combine upstream materials into a playable game" },
+});
+const assetIdsOf = boundAssetIds;
+const titleOf = (node: GameNode) => String(node.data.label || node.data.title || nodeRoles[node.type || "text"]?.label || "Untitled node");
 function AssetMedia({ asset }: { asset: Asset }) {
   if (asset.mimeType.startsWith("image/")) return <img src={asset.url} alt={asset.name} />;
   if (asset.mimeType.startsWith("audio/")) return <div className="material-audio"><Volume2 size={22} /><audio className="nodrag nowheel" controls preload="metadata" src={asset.url} /></div>;
@@ -2136,10 +1864,10 @@ function NodeAssets({ id, data, role }: { id: string; data: GameNode["data"]; ro
   return <div className="node-material-files nodrag nowheel">
     {bound.length ? <div className="bound-assets">{bound.map((asset) => <div className="bound-asset" key={asset.id}>
       <AssetMedia asset={asset} />
-      <div className="bound-asset-caption"><span title={asset.name}>{asset.name}</span><button type="button" aria-label={`解除绑定 ${asset.name}`} onClick={() => actions.edit(id, { assetIds: ids.filter((value) => value !== asset.id), assetId: undefined, url: undefined, mimeType: undefined })}><X size={12} /></button></div>
-    </div>)}</div> : <div className="material-empty"><span>{nodeRoles[role]?.label || "素材"}参考</span><small>可先填写设定，再绑定图片、音频或文档</small></div>}
-    {ids.length > bound.length && <p className="material-missing">部分素材已删除，请重新绑定。</p>}
-    <div className="material-bind-actions"><button type="button" onClick={() => actions.bindAssets(id)}><Library size={12} />选择素材</button><button type="button" onClick={() => actions.uploadAssets(id)}><Upload size={12} />上传并绑定</button><span>{bound.length} 个文件</span></div>
+      <div className="bound-asset-caption"><span title={asset.name}>{asset.name}</span><button type="button" aria-label={t("Unbind {0}", {"0": asset.name})} onClick={() => actions.edit(id, { assetIds: ids.filter((value) => value !== asset.id), assetId: undefined, url: undefined, mimeType: undefined })}><X size={12} /></button></div>
+    </div>)}</div> : <div className="material-empty"><span>{nodeRoles[role]?.label || t("materials")}{t("Reference")}</span><small>{t("Write the design first, then bind images, audio or documents.")}</small></div>}
+    {ids.length > bound.length && <p className="material-missing">{t("Some files have been deleted. Bind new files to replace them.")}</p>}
+    <div className="material-bind-actions"><button type="button" onClick={() => actions.bindAssets(id)}><Library size={12} />{t("Choose files")}</button><button type="button" onClick={() => actions.uploadAssets(id)}><Upload size={12} />{t("Upload and bind")}</button><span>{bound.length}{' '}{t("files")}</span></div>
   </div>;
 }
 function GameThumbnail({ url, title }: { url: string; title: string }) {
@@ -2159,7 +1887,7 @@ function GameThumbnail({ url, title }: { url: string; title: string }) {
       <iframe
         key={url}
         src={url}
-        title={`${title} 缩略预览`}
+        title={t("Preview of {0}", {"0": title})}
         loading="lazy"
         sandbox="allow-scripts"
         tabIndex={-1}
@@ -2168,13 +1896,25 @@ function GameThumbnail({ url, title }: { url: string; title: string }) {
     </div>
   );
 }
+function MaterialDetails({ node, onClose }: { node: GameNode; onClose: () => void }) {
+  useLanguage();
+  const actions = useContext(NodeContext), role = nodeRoles[node.type || 'text'] || nodeRoles.text,
+    specifications = node.data.specifications || {}, references = actions.nodes.filter(candidate => candidate.id !== node.id);
+  return <Modal title={titleOf(node)} wide onClose={onClose}>
+    <div className="material-details-layout"><div className="material-details-files"><MaterialCover node={node} assets={actions.assets}/>
+      {(materialTypes.includes(node.type || '') || node.type === 'asset') && <NodeAssets id={node.id} data={node.data} role={node.type || 'asset'}/>}</div>
+      <div className="material-details-editor"><label className="field-label">{t('Material name')}<input aria-label={t('Material name')} value={titleOf(node)} onChange={event => actions.edit(node.id, {title:event.target.value})}/></label>
+        {role.fields && <div className="material-specifications">{role.fields.map(field => <label key={field.key}><span>{field.label}</span><input aria-label={`${role.label}${field.label}`} value={String(specifications[field.key] ?? '')} placeholder={field.placeholder} onChange={event => actions.edit(node.id, {specifications:{...specifications,[field.key]:event.target.value}})}/></label>)}</div>}
+        <label className="field-label">{t('Design description')}</label><MentionInput value={String(node.data.content ?? node.data.prompt ?? '')} mentions={node.data.mentions || []} nodes={references} assets={actions.assets} onChange={(content,mentions) => actions.edit(node.id,{content,mentions})} ariaLabel={t('Material design description')} placeholder={t('Describe the material. Type @ to reference another material.')} rows={6}/>
+        <p className="material-editor-note">{t('Changes are saved automatically. Bound files and material references are included when generating the connected game.')}</p>
+      </div></div><div className="modal-actions"><button className="button" onClick={() => { actions.useReference(node.id); onClose(); }}><AtSign size={15}/>{t('Reference in director')}</button><button className="button primary" onClick={onClose}><Check size={15}/>{t('Done')}</button></div>
+  </Modal>;
+}
 function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
   const actions = useContext(NodeContext),
     isGame = type === "game",
-    isAsset = type === "asset",
     isMaterial = materialTypes.includes(type),
     role = nodeRoles[type] || nodeRoles.text,
-    specifications = (data.specifications || {}) as Record<string, string>,
     sourceIds = new Set([...actions.edges.filter((edge) => edge.target === id).map((edge) => edge.source), ...(data.referenceNodeIds || []), ...referencedNodeIds(data.mentions || [])]),
     inputs = actions.nodes.filter((node) => sourceIds.has(node.id));
   const Icon = role.icon;
@@ -2196,20 +1936,20 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
         <div className="node-actions nodrag">
           <IconButton
             icon={AtSign}
-            label="引用节点"
+            label={t("Reference node")}
             onClick={() => actions.useReference(id)}
           />
           <IconButton
             icon={Trash2}
-            label="删除节点"
+            label={t("Delete node")}
             onClick={() => actions.remove(id)}
           />
         </div>
       </div>
       <input
         className="node-title nodrag"
-        aria-label="节点标题"
-        value={String(data.label || data.title || "未命名节点")}
+        aria-label={t("Node title")}
+        value={String(data.label || data.title || t("Untitled node"))}
         onChange={(e) =>
           actions.edit(
             id,
@@ -2229,7 +1969,7 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
                   data.previewUrl ||
                     `/api/projects/${actions.projectId}/versions/${data.versionId}/html`,
                 )}
-                title={String(data.label || data.title || "游戏")}
+                title={String(data.label || data.title || t("Game"))}
               />
             ) : (
               <div className="game-empty-preview" aria-hidden="true" />
@@ -2238,18 +1978,18 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
               <div className="node-generating">
                 <Loader2 size={26} className="spin" />
                 <span>
-                  {data.status === "queued" ? "等待生成" : "正在创造游戏…"}
+                  {data.status === "queued" ? t("Waiting to generate") : t("Creating game…")}
                 </span>
               </div>
             ) : data.versionId ? (
               <div className="node-play">
                 <Play size={20} fill="currentColor" />
-                <span>点击试玩</span>
+                <span>{t("Click to play")}</span>
               </div>
             ) : (
               <div className="node-await">
                 <GameCanvasIcon size={28} />
-                <span>等待生成</span>
+                <span>{t("Waiting to generate")}</span>
               </div>
             )}
           </button>
@@ -2258,11 +1998,11 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
               <span />
               {data.status
                 ? statusNames[String(data.status)] || String(data.status)
-                : "尚未生成"}
+                : t("Not generated")}
             </span>
             <span>HTML5</span>
           </div>
-          {inputs.length > 0 && <div className="game-context"><span><WorkflowIcon size={11} />制作输入 · {inputs.length} 个节点</span><div>{inputs.map((input) => { const InputIcon = nodeRoles[input.type || "text"]?.icon || TextNodeIcon; return <span key={input.id} title={`${titleOf(input)} · ${nodeRoles[input.type || "text"]?.label || "创作节点"}`}><InputIcon size={10} />{titleOf(input)}</span>; })}</div></div>}
+          {inputs.length > 0 && <div className="game-context"><span><WorkflowIcon size={11} />{t("Production inputs ·")}{' '}{inputs.length}{' '}{t("nodes")}</span><div>{inputs.map((input) => { const InputIcon = nodeRoles[input.type || "text"]?.icon || TextNodeIcon; return <span key={input.id} title={`${titleOf(input)} · ${nodeRoles[input.type || "text"]?.label || t("Creative node")}`}><InputIcon size={10} />{titleOf(input)}</span>; })}</div></div>}
           {data.error && <p className="node-error">{String(data.error)}</p>}
           {data.summary && (
             <p className="node-summary">{String(data.summary)}</p>
@@ -2273,35 +2013,16 @@ function CanvasNode({ id, data, selected, type }: NodeProps<GameNode>) {
               {String(data.controls)}
             </p>
           )}
-          <MentionInput className="nodrag nowheel node-content game-instructions" ariaLabel="游戏生成描述" value={String(data.content ?? "")} mentions={data.mentions || []} nodes={actions.nodes.filter((node) => node.id !== id)} onChange={(content, mentions) => actions.edit(id, { content, mentions })} placeholder="本游戏的补充要求，输入 @ 引用人物或场景…" compact />
+          <MentionInput className="nodrag nowheel node-content game-instructions" ariaLabel={t("Game instructions")} value={String(data.content ?? "")} mentions={data.mentions || []} nodes={actions.nodes.filter((node) => node.id !== id)} assets={actions.assets} onChange={(content, mentions) => actions.edit(id, { content, mentions })} placeholder={t("Add requirements for this game. Type @ to reference a character or scene…")} compact />
         </>
       ) : (
         <>
-          {(isMaterial || isAsset) && <NodeAssets id={id} data={data} role={type} />}
-          {role.fields && <div className="material-specifications nodrag nowheel">{role.fields.map((field) => <label key={field.key}>
-            <span>{field.label}</span>
-            <input aria-label={`${role.label}${field.label}`} value={String(specifications[field.key] ?? "")} placeholder={field.placeholder} onChange={(event) => actions.edit(id, { specifications: { ...specifications, [field.key]: event.target.value } })} />
-          </label>)}</div>}
-          <MentionInput
-            className="nodrag nowheel node-content"
-            ariaLabel={`${role.label}描述`}
-            value={String(data.content ?? data.prompt ?? "")}
-            mentions={data.mentions || []}
-            nodes={actions.nodes.filter((node) => node.id !== id)}
-            onChange={(content, mentions) => actions.edit(id, { content, mentions })}
-            compact
-            placeholder={
-              type === "brief"
-                ? "描述游戏玩法、操作方式、目标和画面风格…"
-                : isMaterial || isAsset ? `${role.hint}，输入 @ 引用其他节点…` : "记录创作想法，或写下迭代方向…"
-            }
-          />
-          <div className="node-footer">
-            <span>{String(data.content || "").length} 字</span>
-            <span>
-              拖出连线作为上下文 <ArrowRight size={11} />
-            </span>
-          </div>
+          <button className="node-material-overview nodrag" aria-label={t('Open material details for {name}', { name: String(data.title || role.label) })} onClick={() => actions.openDetails(id)}>
+            <MaterialCover node={{ id, type, data }} assets={actions.assets}/>
+            <p>{mentionSummary({id,type,data})}</p>
+            <span><span>{t('{count} files', { count: actions.assets.filter(asset => assetIdsOf(data).includes(asset.id)).length })}</span>{t('View details')}<ArrowUpRight size={12}/></span>
+          </button>
+          <div className="node-footer"><span>{t('{count} connections', { count: actions.edges.filter(edge => edge.source === id).length })}</span><span>{t('Connect as context')}<ArrowRight size={11}/></span></div>
         </>
       )}
       <Handle type="source" position={Position.Right} />
@@ -2342,6 +2063,7 @@ function Studio({
     [view, setView] = useState<"canvas" | "storyboard">("canvas"),
     [director, setDirector] = useState(() => window.innerWidth > 640),
     [assetsOpen, setAssetsOpen] = useState(false),
+    [detailNodeId, setDetailNodeId] = useState<string>(),
     [assetTarget, setAssetTarget] = useState<string | undefined>(),
     [assetNodeRole, setAssetNodeRole] = useState("asset"),
     [assetSearch, setAssetSearch] = useState(""),
@@ -2355,13 +2077,13 @@ function Studio({
     [mode, setMode] = useState<"generate" | "iterate">("generate"),
     [settings, setSettings] = useState(project.settings || {}),
     [submitting, setSubmitting] = useState(false),
-    [saveStatus, setSaveStatus] = useState("已保存"),
+    [saveStatus, setSaveStatus] = useState("Saved"),
     [miniMap, setMiniMap] = useState(false),
     [codeOpen, setCodeOpen] = useState(false),
     [code, setCode] = useState(""),
     [codeLoading, setCodeLoading] = useState(false),
     [codeSaving, setCodeSaving] = useState(false),
-    [codeTitle, setCodeTitle] = useState("手动修改版本"),
+    [codeTitle, setCodeTitle] = useState("Manually edited version"),
     [exportOpen, setExportOpen] = useState(false),
     [uploading, setUploading] = useState(false),
     [logsOpen, setLogsOpen] = useState(false);
@@ -2470,7 +2192,7 @@ function Studio({
         settings: settingsRef.current,
       };
       const text = JSON.stringify(graph);
-      setSaveStatus("保存中…");
+      setSaveStatus("Saving…");
       const operation = savingPromise.current
         .catch(() => {})
         .then(() => api.patch(projectId, { ...graph, ...extra }));
@@ -2485,11 +2207,11 @@ function Studio({
             edges: edgesRef.current,
             settings: settingsRef.current,
           });
-          setSaveStatus(currentGraph === text ? "已保存" : "未保存");
+          setSaveStatus(currentGraph === text ? "Saved" : "Unsaved");
         }
         return result;
       } catch (e) {
-        setSaveStatus("保存失败");
+        setSaveStatus("Save failed");
         notify((e as Error).message);
         throw e;
       }
@@ -2503,7 +2225,7 @@ function Studio({
       settings,
     });
     if (text === savedGraph.current) return;
-    setSaveStatus("未保存");
+    setSaveStatus("Unsaved");
     saveTimer.current = setTimeout(() => {
       void saveGraph().catch(() => {});
     }, 650);
@@ -2539,7 +2261,7 @@ function Studio({
       type,
       position: center,
       data: {
-        title: asset?.name || nodeRoles[type]?.label || "创作笔记",
+        title: asset?.name || nodeRoles[type]?.label || "Creative notes",
         content: "",
         ...(materialTypes.includes(type) ? { specifications: {} } : {}),
         ...(asset
@@ -2561,9 +2283,9 @@ function Studio({
       existingMaxX = Math.max(start.x - 500, ...nodesRef.current.map((node) => node.position.x + 400)),
       x = nodesRef.current.length ? existingMaxX + 100 : start.x,
       briefId = uid(), gameId = uid();
-    const brief: GameNode = { id: briefId, type: "brief", position: { x, y: start.y + 340 }, data: { title: "游戏创作需求", content: "" } },
-      game: GameNode = { id: gameId, type: "game", selected: true, position: { x: x + 1040, y: start.y + 340 }, data: { title: "整合素材 · 生成游戏", status: "idle", content: "" } },
-      materials: GameNode[] = materialTypes.map((type, index) => ({ id: uid(), type, position: { x: x + 360 + (index % 2) * 330, y: start.y + Math.floor(index / 2) * 720 }, data: { title: nodeRoles[type].label, content: "", specifications: {} } }));
+    const brief: GameNode = { id: briefId, type: "brief", position: { x, y: start.y + 160 }, data: { title: "Game brief", content: "" } },
+      game: GameNode = { id: gameId, type: "game", selected: true, position: { x: x + 1120, y: start.y + 160 }, data: { title: "Combine materials · Generate game", status: "idle", content: "" } },
+      materials: GameNode[] = materialTypes.map((type, index) => ({ id: uid(), type, position: { x: x + 360 + (index % 2) * 360, y: start.y + Math.floor(index / 2) * 360 }, data: { title: nodeRoles[type].label, content: "", specifications: {} } }));
     const added = [brief, ...materials, game], links = [brief, ...materials].map((node) => ({ id: uid(), source: node.id, target: gameId, type: "smoothstep" }));
     for (const node of added) knownNodeIds.current.add(node.id);
     setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...added]);
@@ -2572,7 +2294,7 @@ function Studio({
     setMode("generate");
     setAddOpen(false);
     setTimeout(() => void flow.fitView({ nodes: added, padding: 0.13, duration: 400 }), 100);
-    notify("已加入完整制作工作流；填写人物、场景、道具和声音设定，再上传参考素材。");
+    notify(t("A complete workflow was added. Define the character, scene, props and audio, then upload references."));
   };
   const editNode = useCallback(
     (id: string, updates: Record<string, unknown>) =>
@@ -2590,7 +2312,7 @@ function Studio({
         node?.data.jobId &&
         jobs.some((job) => isActive(job) && job.id === node.data.jobId)
       ) {
-        notify("请先取消该节点的生成任务");
+        notify(t("Cancel this node’s job first."));
         return;
       }
       setNodes((ns) => ns.filter((n) => n.id !== id));
@@ -2614,7 +2336,7 @@ function Studio({
           (v) => v.id === node?.data.versionId,
         );
       if (!version) {
-        notify("游戏还没有生成，请在 AI 导演中提交创作要求");
+        notify(t("This game has not been generated. Submit a request in the director."));
         return;
       }
       onPreview(version);
@@ -2624,7 +2346,7 @@ function Studio({
   const onConnect = useCallback(
     (c: Connection) => {
       if (c.source === c.target) {
-        notify("节点不能连接到自己");
+        notify(t("A node cannot connect to itself."));
         return;
       }
       setEdges((es) =>
@@ -2638,13 +2360,13 @@ function Studio({
     const targetId = uploadTarget.current;
     const target = nodesRef.current.find((node) => node.id === targetId);
     if (targetId && !target) {
-      notify("上传目标已删除，请重新选择绑定节点。");
+      notify(t("The upload target was deleted. Choose another node."));
       uploadTarget.current = undefined;
       if (fileInput.current) fileInput.current.value = "";
       return;
     }
     if (target && assetIdsOf(target.data).length + files.length > 20) {
-      notify("每个素材节点最多绑定 20 个文件，请减少本次选择。");
+      notify(t("Each material node supports up to 20 files. Select fewer files."));
       if (fileInput.current) fileInput.current.value = "";
       return;
     }
@@ -2659,7 +2381,7 @@ function Studio({
         } else addNode(assetNodeRole, asset);
       }
       onProject(await api.project(project.id));
-      notify(libraryOnly ? "上传目标已删除，文件已保存在素材库，请重新选择节点绑定。" : targetId ? "素材已上传并绑定到节点" : "素材已上传并加入画布");
+      notify(t(libraryOnly ? "The target was deleted. Your files are saved in the asset library; choose another node to bind them." : targetId ? "Files uploaded and bound to the node." : "Files uploaded and added to the canvas."));
     } catch (e) {
       notify((e as Error).message);
     } finally {
@@ -2674,8 +2396,8 @@ function Studio({
     const currentNodes = nodesRef.current,
       currentGames = currentNodes.filter((node) => node.type === "game"),
       chosenTarget = currentGames.find((node) => node.selected) || currentGames.find((node) => node.id === settingsRef.current.outputNodeId) || (currentGames.length === 1 ? currentGames[0] : undefined);
-    if (currentGames.length && !chosenTarget) { notify("请选择 AI 导演中的生成目标，或点击画布里的游戏节点。"); return; }
-    if (mode === "iterate" && !chosenTarget?.data.versionId) { notify("当前生成目标尚无游戏版本，请先生成游戏。"); return; }
+    if (currentGames.length && !chosenTarget) { notify(t("Select a game output in the director or click a game node on the canvas.")); return; }
+    if (mode === "iterate" && !chosenTarget?.data.versionId) { notify(t("This output has no version to iterate. Generate a game first.")); return; }
     const contextIds = new Set<string>(), pending = chosenTarget ? [chosenTarget.id] : [];
     while (pending.length) {
       const id = pending.pop()!;
@@ -2692,11 +2414,11 @@ function Studio({
         .join("\n")
         .trim() || String(chosenTarget?.data.content ?? "").trim();
     if (!content) {
-      notify("请先描述你想制作的游戏");
+      notify(t("Describe the game you want to create first."));
       return;
     }
     if (!health?.codex.available || !health?.codex.authenticated) {
-      notify("Codex CLI 未连接，请返回设置检查连接");
+      notify(t("The generation runtime is not connected. Check its status in settings."));
       return;
     }
     setSubmitting(true);
@@ -2715,7 +2437,7 @@ function Studio({
             x: (briefs[0]?.position.x || 0) + 390,
             y: briefs[0]?.position.y || 0,
           },
-          data: { title: "AI 游戏", status: "queued" },
+          data: { title: "AI game", status: "queued" },
         };
         knownNodeIds.current.add(target.id);
         nextNodes = [...nextNodes, target];
@@ -2753,7 +2475,7 @@ function Studio({
       setPrompt("");
       setPromptMentions([]);
       setRefs([]);
-      notify("创作任务已提交，进度将实时显示");
+      notify(t("Request submitted. Progress will update automatically."));
     } catch (e) {
       notify((e as Error).message);
     } finally {
@@ -2771,7 +2493,7 @@ function Studio({
         const actual = measured.get(node.id) || node;
         return {
           width: actual.measured?.width || actual.width || (materialTypes.includes(node.type || "") ? 300 : 276),
-          height: actual.measured?.height || actual.height || (materialTypes.includes(node.type || "") ? 680 : node.type === "game" ? 470 : 360),
+          height: actual.measured?.height || actual.height || (node.type === "game" ? 470 : 330),
         };
       },
       columnWidths = [0, 1, 2].map((column) => Math.max(300, ...order.filter((_, index) => index % 3 === column).map((node) => sizeOf(node).width))),
@@ -2792,14 +2514,14 @@ function Studio({
   const activate = async (v: Version) => {
     try {
       onProject(await api.activate(project.id, v.id));
-      notify(`已切换到 ${v.title || "所选版本"}`);
+      notify(t("Switched to {0}", {"0": v.title || "所选版本"}));
     } catch (e) {
       notify((e as Error).message);
     }
   };
   const openCode = async () => {
     if (!activeVersion) {
-      notify("先生成一个游戏，即可编辑代码");
+      notify(t("Generate a game before editing its code."));
       return;
     }
     setCodeOpen(true);
@@ -2808,9 +2530,9 @@ function Studio({
       const response = await fetch(
         `/api/projects/${project.id}/versions/${activeVersion.id}/html`,
       );
-      if (!response.ok) throw new Error("无法读取游戏源码");
+      if (!response.ok) throw new Error(t("Unable to read game source."));
       setCode(await response.text());
-      setCodeTitle(`${activeVersion.title || project.name} · 手动修改`);
+      setCodeTitle(t("{0} · Manual edit", {"0": activeVersion.title || project.name}));
     } catch (e) {
       notify((e as Error).message);
     } finally {
@@ -2824,11 +2546,11 @@ function Studio({
         await api.manualVersion(project.id, {
           html: code,
           title: codeTitle,
-          summary: "在代码编辑器中手动修改",
+          summary: "Manually edited in the code editor",
         }),
       );
       setCodeOpen(false);
-      notify("已保存为新版本，原版本仍然保留");
+      notify(t("Saved a new version. The previous version is preserved."));
     } catch (e) {
       notify((e as Error).message);
     } finally {
@@ -2839,7 +2561,7 @@ function Studio({
     if (activeJob)
       void api
         .cancel(activeJob.id)
-        .then(() => notify("生成任务已取消"))
+        .then(() => notify(t("Generation canceled.")))
         .catch((e) => notify(e.message));
   };
   const refNodes = nodes.filter((n) => refs.includes(n.id));
@@ -2851,7 +2573,7 @@ function Studio({
         <div className="studio-header-left">
           <IconButton
             icon={ArrowLeft}
-            label="返回项目"
+            label={t("Back to projects")}
             onClick={() => {
               void saveGraph()
                 .then(onBack)
@@ -2878,15 +2600,15 @@ function Studio({
           <span
             className={clsx(
               "save-indicator",
-              saveStatus === "保存失败" && "red",
+              saveStatus === "Save failed" && "red",
             )}
           >
-            {saveStatus === "保存中…" ? (
+            {saveStatus === "Saving…" ? (
               <Loader2 size={12} className="spin" />
             ) : (
               <Check size={12} />
             )}
-            <span>{saveStatus}</span>
+            <span>{t(saveStatus)}</span>
           </span>
         </div>
         <div className="studio-view-toggle">
@@ -2894,45 +2616,42 @@ function Studio({
             className={view === "canvas" ? "active" : ""}
             onClick={() => setView("canvas")}
           >
-            <WorkflowIcon size={15} />
-            工作流
-          </button>
+            <WorkflowIcon size={15} />{t("Workflow")}</button>
           <button
             className={view === "storyboard" ? "active" : ""}
             onClick={() => setView("storyboard")}
           >
-            <LayoutGrid size={15} />
-            游戏板
-          </button>
+            <LayoutGrid size={15} />{t("Material board")}</button>
         </div>
         <div className="studio-header-right">
+          <LanguageSwitch />
           <span className="model-pill">
             <Cpu size={12} />
             gpt-6.1-sol
           </span>
           <button
             className="button small"
-            aria-label="游戏版本"
-            title="游戏版本"
+            aria-label={t("Game versions")}
+            title={t("Game versions")}
             onClick={() => setVersionsOpen((v) => !v)}
           >
             <HistoryIcon size={15} />
-            <span>版本</span>
+            <span>{t("Versions")}</span>
             <span className="count-badge">{project.versions.length}</span>
           </button>
           <button
             className="button small"
-            aria-label="导出游戏"
-            title="导出游戏"
+            aria-label={t("Export game")}
+            title={t("Export game")}
             disabled={!activeVersion}
             onClick={() => setExportOpen((v) => !v)}
           >
             <Download size={15} />
-            <span>导出</span>
+            <span>{t("Export")}</span>
           </button>
           <IconButton
             icon={director ? PanelRightClose : PanelRightOpen}
-            label={director ? "收起 AI 导演" : "打开 AI 导演"}
+            label={director ? t("Close director") : t("Open director")}
             onClick={() => setDirector((v) => !v)}
           />
         </div>
@@ -2953,6 +2672,7 @@ function Studio({
                 assets: project.assets,
                 bindAssets: (id) => { setAssetTarget(id); setAssetsOpen(true); },
                 uploadAssets: (id) => { uploadTarget.current = id; fileInput.current?.click(); },
+                openDetails: (id) => { setDetailNodeId(id); setNodes(current => current.map(node => ({ ...node, selected: node.id === id }))); },
               }}
             >
               <ReactFlow
@@ -2965,7 +2685,7 @@ function Studio({
                       (job) => isActive(job) && job.id === node.data.jobId,
                     ),
                   );
-                  if (blocked) notify("请先取消该节点的生成任务");
+                  if (blocked) notify(t("Cancel this node’s job first."));
                   return !blocked;
                 }}
                 onNodesChange={(changes) =>
@@ -3030,8 +2750,8 @@ function Studio({
           ) : (
             <div className="storyboard">
               <div className="storyboard-heading">
-                <h2>游戏板</h2>
-                <p>把每个创作阶段，放在同一张桌面上。</p>
+                <h2>{t("Material board")}</h2>
+                <p>{t("Every creative stage in one workspace.")}</p>
               </div>
               <div className="storyboard-grid">
                 {nodes.map((n, i) => (
@@ -3050,11 +2770,11 @@ function Studio({
                     <div className="storyboard-card-header">
                       <span>
                         {String(i + 1).padStart(2, "0")} /{" "}
-                        {nodeRoles[n.type || "text"]?.label || "文本笔记"}
+                        {nodeRoles[n.type || "text"]?.label || t("Notes")}
                       </span>
                       <IconButton
                         icon={AtSign}
-                        label="引用节点"
+                        label={t("Reference node")}
                         onClick={() => useReference(n.id)}
                       />
                     </div>
@@ -3064,8 +2784,8 @@ function Studio({
                         disabled={!n.data.versionId}
                         aria-label={
                           n.data.versionId
-                            ? `试玩 ${String(n.data.label || n.data.title || "游戏")}`
-                            : "游戏等待生成"
+                            ? t("Play {0}", {"0": String(n.data.label || n.data.title || "游戏")})
+                            : t("Game pending generation")
                         }
                         onClick={() => previewNode(n.id)}
                       >
@@ -3076,7 +2796,7 @@ function Studio({
                                 `/api/projects/${project.id}/versions/${n.data.versionId}/html`,
                             )}
                             title={String(
-                              n.data.label || n.data.title || "游戏",
+                              n.data.label || n.data.title || t("Game"),
                             )}
                           />
                         ) : (
@@ -3088,21 +2808,17 @@ function Studio({
                           ) : (
                             <GameCanvasIcon size={17} />
                           )}
-                          {n.data.versionId ? "试玩游戏" : "等待生成"}
+                          {n.data.versionId ? t("Play game") : t("Waiting to generate")}
                         </span>
                       </button>
                     ) : (
-                      <>
-                        {(materialTypes.includes(n.type || "") || n.type === "asset") && <div className="storyboard-material-assets">{project.assets.filter((asset) => assetIdsOf(n.data).includes(asset.id)).map((asset) => <div key={asset.id}><AssetMedia asset={asset} /></div>)}</div>}
-                        <MentionInput value={String(n.data.content ?? n.data.prompt ?? "")} mentions={n.data.mentions || []} nodes={nodes.filter((node) => node.id !== n.id)} onChange={(content, mentions) => editNode(n.id, { content, mentions })} ariaLabel={`${nodeRoles[n.type || "text"]?.label || "文本"}描述`} placeholder={`${nodeRoles[n.type || "text"]?.hint || "创作说明"}，输入 @ 引用节点…`} compact />
-                        {n.data.specifications && <div className="storyboard-specifications">{nodeRoles[n.type || "text"]?.fields?.map((field) => n.data.specifications?.[field.key] ? <span key={field.key}>{field.label}：{String(n.data.specifications[field.key])}</span> : null)}</div>}
-                      </>
+                      <button className="storyboard-material-overview" aria-label={t('Open material details for {name}', {name: titleOf(n)})} onClick={() => setDetailNodeId(n.id)}><MaterialCover node={n} assets={project.assets}/><p>{mentionSummary(n)}</p><span>{t('View details')}<ArrowUpRight size={13}/></span></button>
                     )}
                     <h3>{titleOf(n)}</h3>
                     <p>
                       {n.type === "game"
-                        ? statusNames[String(n.data.status)] || "等待生成"
-                        : `${assetIdsOf(n.data).length} 个素材 · ${edges.filter((edge) => edge.source === n.id).length} 个下游连接`}
+                        ? statusNames[String(n.data.status)] || t("Waiting to generate")
+                        : t("{0} materials · {1} outgoing connections", {"0": assetIdsOf(n.data).length, "1": edges.filter((edge) => edge.source === n.id).length})}
                     </p>
                   </div>
                 ))}
@@ -3111,29 +2827,28 @@ function Studio({
                   onClick={() => addNode("game")}
                 >
                   <Plus size={29} />
-                  <span>添加游戏节点</span>
+                  <span>{t("Add game output")}</span>
                 </button>
               </div>
             </div>
           )}
           <div className="canvas-top-label">
-            <span>画布 1</span>
+            <span>{t("Canvas 1")}</span>
             <span>
-              {nodes.length} 个节点 <i /> {edges.length} 个连接
-            </span>
+              {nodes.length}{' '}{t("nodes")}{' '}<i /> {edges.length}{' '}{t("connections")}</span>
           </div>
           <div className="canvas-left-tools">
             <div className="relative">
               <IconButton
                 icon={Plus}
-                label="添加节点"
+                label={t("Add node")}
                 className="tool-add"
                 onClick={() => setAddOpen((v) => !v)}
               />
               {addOpen && (
                 <div className="add-node-menu">
-                  <strong>添加到画布</strong>
-                  <button className="add-workflow" onClick={insertWorkflow}><WorkflowIcon size={18} /><div>游戏制作工作流<small>需求 + 人物 + 场景 + 道具 + 音频 + 游戏</small></div></button>
+                  <strong>{t("Add to canvas")}</strong>
+                  <button className="add-workflow" onClick={insertWorkflow}><WorkflowIcon size={18} /><div>{t("Game production workflow")}<small>{t("Brief + character + scene + prop + audio + game")}</small></div></button>
                   {Object.entries(nodeRoles).filter(([type]) => type !== "asset").map(([type, { icon: Icon, label, hint }]) => (
                     <button key={type} onClick={() => addNode(type)}>
                       <Icon size={18} />
@@ -3151,8 +2866,7 @@ function Studio({
                     }}
                   >
                     <ImagePlus size={18} />
-                    <div>
-                      上传素材<small>图片、音频、文档</small>
+                    <div>{t("Upload files")}<small>{t("Images, audio and documents")}</small>
                     </div>
                   </button>
                 </div>
@@ -3160,74 +2874,70 @@ function Studio({
             </div>
             <IconButton
               icon={CursorIcon}
-              label="选择工具 · 拖动节点，拖动空白平移"
+              label={t("Select tool · Drag nodes or pan the canvas")}
               onClick={() =>
-                notify("点击节点选择，拖动节点移动；拖动空白区域平移画布")
+                notify(t("Click to select, drag to move a node, or drag empty space to pan."))
               }
             />
-            <IconButton icon={ArrangeIcon} label="整理节点" onClick={tidy} />
+            <IconButton icon={ArrangeIcon} label={t("Arrange nodes")} onClick={tidy} />
             <span className="tool-divider" />
             <IconButton
               icon={AssetLibraryIcon}
-              label="项目资产"
+              label={t("Project assets")}
               onClick={() => setAssetsOpen((v) => !v)}
             />
             <IconButton
               icon={Code2}
-              label="编辑游戏代码"
+              label={t("Edit game code")}
               onClick={() => void openCode()}
             />
             <IconButton
               icon={Play}
-              label="试玩当前版本"
+              label={t("Play current version")}
               onClick={() => {
                 if (activeVersion) onPreview(activeVersion);
-                else notify("先生成一个游戏，即可开始试玩");
+                else notify(t("Generate a game to start playing."));
               }}
             />
           </div>
           <div className="canvas-bottom-bar">
             <button onClick={() => setAssetsOpen((v) => !v)}>
-              <AssetLibraryIcon size={15} />
-              资产管理<span>{project.assets.length}</span>
+              <AssetLibraryIcon size={15} />{t("Asset library")}<span>{project.assets.length}</span>
             </button>
             <div className="canvas-zoom">
               <IconButton
                 icon={ZoomOut}
-                label="缩小"
+                label={t("Zoom out")}
                 onClick={() => void flow.zoomOut({ duration: 200 })}
               />
               <span>{Math.round(flow.getZoom() * 100)}%</span>
               <IconButton
                 icon={ZoomIn}
-                label="放大"
+                label={t("Zoom in")}
                 onClick={() => void flow.zoomIn({ duration: 200 })}
               />
               <span className="tool-divider" />
               <IconButton
                 icon={Scan}
-                label="适应画布"
+                label={t("Fit canvas")}
                 onClick={() =>
                   void flow.fitView({ padding: 0.18, duration: 350 })
                 }
               />
               <IconButton
                 icon={MapIcon}
-                label="切换小地图"
+                label={t("Toggle minimap")}
                 onClick={() => setMiniMap((v) => !v)}
               />
             </div>
             <span className="canvas-hint">
-              <Grip size={12} />
-              拖动空白平移 · 滚轮缩放
-            </span>
+              <Grip size={12} />{t("Drag empty space to pan · Scroll to zoom")}</span>
           </div>
           {assetsOpen && (
             <div className="asset-dock">
               <header>
                 <strong>
-                  <AssetLibraryIcon size={16} />
-                  项目资产 <span>{project.assets.length}</span>
+                  <AssetLibraryIcon size={16} />{t("Project assets")}{' '}<span>{project.assets.length}</span>
                 </strong>
                 <div>
                   <button
@@ -3240,22 +2950,22 @@ function Studio({
                     ) : (
                       <Upload size={13} />
                     )}
-                    {assetTarget ? "上传并绑定" : "上传素材"}
+                    {assetTarget ? t("Upload and bind") : t("Upload files")}
                   </button>
                   <IconButton
                     icon={X}
-                    label="关闭资产"
+                    label={t("Close assets")}
                     onClick={() => setAssetsOpen(false)}
                   />
                 </div>
               </header>
               <div className="asset-dock-options">
-                <label className="asset-search"><Search size={13} /><input aria-label="搜索项目素材" placeholder="搜索素材名称…" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /></label>
-                <select aria-label="素材文件类型" value={assetCategory} onChange={(event) => setAssetCategory(event.target.value)}><option value="all">全部文件</option><option value="image">图片</option><option value="audio">音频</option><option value="document">文档</option></select>
-                <select aria-label="素材绑定目标" value={assetTarget || ""} onChange={(event) => setAssetTarget(event.target.value || undefined)}><option value="">新建素材节点</option>{nodes.filter((node) => materialTypes.includes(node.type || "") || node.type === "asset").map((node) => <option key={node.id} value={node.id}>{nodeRoles[node.type || "asset"]?.label || "素材"} · {titleOf(node)} · 节点 {nodes.findIndex((candidate) => candidate.id === node.id) + 1}</option>)}</select>
-                {!assetTarget && <select aria-label="新建素材节点类型" value={assetNodeRole} onChange={(event) => setAssetNodeRole(event.target.value)}>{[...materialTypes, "asset"].map((type) => <option key={type} value={type}>{nodeRoles[type].label}</option>)}</select>}
+                <label className="asset-search"><Search size={13} /><input aria-label={t("Search project assets")} placeholder={t("Search file names…")} value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /></label>
+                <select aria-label={t("File type")} value={assetCategory} onChange={(event) => setAssetCategory(event.target.value)}><option value="all">{t("All files")}</option><option value="image">{t("Images")}</option><option value="audio">{t("Audio files")}</option><option value="document">{t("Documents")}</option></select>
+                <select aria-label={t("Bind files to")} value={assetTarget || ""} onChange={(event) => setAssetTarget(event.target.value || undefined)}><option value="">{t("New material node")}</option>{nodes.filter((node) => materialTypes.includes(node.type || "") || node.type === "asset").map((node) => <option key={node.id} value={node.id}>{nodeRoles[node.type || "asset"]?.label || t("materials")} · {titleOf(node)}{' '}{t("· Node")}{' '}{nodes.findIndex((candidate) => candidate.id === node.id) + 1}</option>)}</select>
+                {!assetTarget && <select aria-label={t("New material type")} value={assetNodeRole} onChange={(event) => setAssetNodeRole(event.target.value)}>{[...materialTypes, "asset"].map((type) => <option key={type} value={type}>{nodeRoles[type].label}</option>)}</select>}
               </div>
-              <p className="dock-instructions">{assetTarget ? `点击素材绑定到「${bindingNode ? titleOf(bindingNode) : "已删除的节点"}」，再次点击解除绑定。文件可在多个节点重复使用。` : `点击素材新建「${nodeRoles[assetNodeRole].label}」节点，或选择已有节点进行绑定。`}</p>
+              <p className="dock-instructions">{assetTarget ? t("Click a file to bind it to “{0}”; click again to unbind. A file can be reused across nodes.", {"0": bindingNode ? titleOf(bindingNode) : "已删除的节点"}) : t("Click a file to create a “{0}” node, or choose an existing node to bind it.", {"0": nodeRoles[assetNodeRole].label})}</p>
               {filteredAssets.length ? (
                 <div className="dock-assets">
                   {filteredAssets.map((a) => (
@@ -3265,12 +2975,12 @@ function Studio({
                       onClick={() => {
                         if (!assetTarget) { addNode(assetNodeRole, a); return; }
                         const target = nodesRef.current.find((node) => node.id === assetTarget);
-                        if (!target) { notify("绑定目标已删除，请重新选择节点"); return; }
+                        if (!target) { notify(t("The target was deleted. Choose another node.")); return; }
                         const ids = assetIdsOf(target.data), bound = ids.includes(a.id);
-                        if (!bound && ids.length >= 20) { notify("每个素材节点最多绑定 20 个文件"); return; }
+                        if (!bound && ids.length >= 20) { notify(t("Each material node supports up to 20 files.")); return; }
                         editNode(target.id, { assetIds: bound ? ids.filter((id) => id !== a.id) : [...ids, a.id], assetId: undefined });
                       }}
-                      title={assetTarget ? `绑定或解除 ${a.name}` : `用 ${a.name} 新建${nodeRoles[assetNodeRole].label}`}
+                      title={assetTarget ? t("Bind or unbind {0}", {"0": a.name}) : t("Create {1} with {0}", {"0": a.name, "1": nodeRoles[assetNodeRole].label})}
                     >
                       {a.mimeType.startsWith("image/") ? (
                         <img src={a.url} alt={a.name} />
@@ -3288,7 +2998,7 @@ function Studio({
                 </div>
               ) : (
                 <div className="dock-empty">
-                  {project.assets.length ? "没有匹配的素材，请调整搜索或文件类型。" : "上传参考图片、音频或文档，再绑定到人物、场景和道具节点。"}
+                  {project.assets.length ? t("No matching files. Change the search term or file type.") : t("Upload images, audio or documents and bind them to material nodes.")}
                 </div>
               )}
             </div>
@@ -3309,30 +3019,25 @@ function Studio({
                 <span className="director-orb">
                   <DirectorIcon size={18} />
                 </span>
-                <strong>
-                  AI 导演<span>素材 · 生成 · 迭代</span>
+                <strong>{t("AI director")}<span>{t("Materials · Generate · Iterate")}</span>
                 </strong>
               </div>
               <IconButton
                 icon={PanelRightClose}
-                label="收起 AI 导演"
+                label={t("Close director")}
                 onClick={() => setDirector(false)}
               />
             </header>
             <div className="director-chat">
               {!project.messages.length ? (
                 <div className="director-welcome">
-                  <h2>从素材开始创作</h2>
-                  <p>
-                    填写玩法和素材要求，
-                    <br />
-                    或用 @ 引用画布节点。
-                  </p>
+                  <h2>{t("Start with your materials")}</h2>
+                  <p>{t("Describe gameplay and materials,")}<br />{t("or reference canvas nodes with @.")}</p>
                   <div className="suggestion-buttons">
                     {[
-                      "做一个霓虹风格的太空射击游戏，支持键盘与手机触摸操作",
-                      "把游戏难度调整得更轻松，增加开始界面和暂停按钮",
-                      "优化手机触摸体验，加入音效与游戏结束反馈",
+                      t("Create a complete neon space shooter with keyboard and touch controls."),
+                      t("Make the game easier, and add a start screen and pause controls."),
+                      t("Improve touch controls and add sound effects and end-game feedback."),
                     ].map((s, i) => (
                       <button
                         key={s}
@@ -3347,7 +3052,7 @@ function Studio({
                             i === j ? <Icon key={j} size={15} /> : null,
                           )}
                         </span>
-                        {["太空射击游戏", "调整玩法与难度", "适配触屏操作"][i]}
+                        {[t("Space shooter"), t("Tune gameplay and difficulty"), t("Optimize touch controls")][i]}
                         <ArrowUpRight size={13} />
                       </button>
                     ))}
@@ -3364,10 +3069,10 @@ function Studio({
                     <div>
                       <span className="message-author">
                         {m.role === "user"
-                          ? "你"
+                          ? t("You")
                           : m.role === "system"
-                            ? "系统"
-                            : "AI 导演"}
+                            ? t("System")
+                            : t("AI director")}
                       </span>
                       <p>{m.content}</p>
                     </div>
@@ -3389,15 +3094,15 @@ function Studio({
                   </div>
                   <p>
                     {activeJob.status === "queued"
-                      ? "任务已进入本地队列，请稍候。"
-                      : "Codex 正在本地编写、检查游戏代码…"}
+                      ? t("Your job is queued. It will start shortly.")
+                      : t("The generation service is writing and checking the game…")}
                   </p>
                   <button
                     className="log-toggle"
                     onClick={() => setLogsOpen((v) => !v)}
                   >
                     <Terminal size={13} />
-                    {logsOpen ? "收起执行日志" : "查看执行日志"}
+                    {logsOpen ? t("Hide execution logs") : t("Show execution logs")}
                     <ChevronDown size={12} />
                   </button>
                   {logsOpen && (
@@ -3410,21 +3115,17 @@ function Studio({
                     </div>
                   )}
                   <button className="cancel-job" onClick={cancel}>
-                    <Square size={12} />
-                    取消生成
-                  </button>
+                    <Square size={12} />{t("Cancel generation")}</button>
                 </div>
               )}
               {!activeJob && latestJob?.status === "failed" && (
                 <div className="failed-job">
                   <AlertCircle size={17} />
                   <div>
-                    <strong>这次生成未完成</strong>
-                    <p>{latestJob.error || "请检查连接后重试"}</p>
+                    <strong>{t("Generation did not complete")}</strong>
+                    <p>{latestJob.error || t("Check the connection and try again.")}</p>
                     <button onClick={() => { setPrompt(latestJob.prompt); setPromptMentions((latestJob as Job & { mentions?: MentionToken[] }).mentions || []); }}>
-                      <RotateCcw size={13} />
-                      载入提示词重试
-                    </button>
+                      <RotateCcw size={13} />{t("Load request to retry")}</button>
                   </div>
                 </div>
               )}
@@ -3436,15 +3137,13 @@ function Studio({
             >
               <div className="reference-row">
                 <button type="button" onClick={() => setRefsOpen((v) => !v)}>
-                  <Plus size={13} />
-                  参考
-                </button>
+                  <Plus size={13} />{t("Reference")}</button>
                 {refNodes.map((n) => (
                   <span key={n.id}>
-                    @{String(n.data.label || n.data.title)}
+                    <MaterialCover node={n} assets={project.assets} className="reference-mini-cover"/>@{String(n.data.label || n.data.title)}
                     <button
                       type="button"
-                      aria-label="移除引用"
+                      aria-label={t("Remove reference")}
                       onClick={() =>
                         setRefs((rs) => rs.filter((r) => r !== n.id))
                       }
@@ -3456,7 +3155,7 @@ function Studio({
               </div>
               {refsOpen && (
                 <div className="reference-picker">
-                  <strong>引用画布节点</strong>
+                  <strong>{t("Reference canvas nodes")}</strong>
                   {nodes.length ? (
                     nodes.map((n) => (
                       <button
@@ -3478,61 +3177,52 @@ function Studio({
                         >
                           {refs.includes(n.id) && <Check size={11} />}
                         </span>
-                        {n.type === "game" ? (
-                          <GameCanvasIcon size={14} />
-                        ) : n.type === "asset" ? (
-                          <AssetLibraryIcon size={14} />
-                        ) : (
-                          <TextNodeIcon size={14} />
-                        )}
+                        <MaterialCover node={n} assets={project.assets} className="reference-mini-cover"/>
                         <span>{String(n.data.label || n.data.title)}</span>
                       </button>
                     ))
                   ) : (
-                    <p>先在画布中添加节点。</p>
+                    <p>{t("Add nodes to the canvas first.")}</p>
                   )}
                   <button
                     type="button"
                     className="ref-done"
                     onClick={() => setRefsOpen(false)}
-                  >
-                    完成选择
-                  </button>
+                  >{t("Done")}</button>
                 </div>
               )}
-              {gameNodes.length > 1 && <label className="director-output-target"><span>生成目标</span><select aria-label="生成目标" value={outputNode?.id || ""} onChange={(event) => {
+              {gameNodes.length > 1 && <label className="director-output-target"><span>{t("Game output")}</span><select aria-label={t("Game output")} value={outputNode?.id || ""} onChange={(event) => {
                 const id = event.target.value;
                 setSettings((current) => ({ ...current, outputNodeId: id }));
                 setNodes((current) => current.map((node) => ({ ...node, selected: node.id === id })));
-              }}><option value="" disabled>请选择游戏节点</option>{gameNodes.map((node) => <option key={node.id} value={node.id}>{titleOf(node)} · 节点 {nodes.findIndex((candidate) => candidate.id === node.id) + 1}</option>)}</select></label>}
+              }}><option value="" disabled>{t("Choose a game node")}</option>{gameNodes.map((node) => <option key={node.id} value={node.id}>{titleOf(node)}{' '}{t("· Node")}{' '}{nodes.findIndex((candidate) => candidate.id === node.id) + 1}</option>)}</select></label>}
               <MentionInput
                 value={prompt}
                 mentions={promptMentions}
                 nodes={nodes}
+                assets={project.assets}
                 onChange={(value, mentions) => { setPrompt(value); setPromptMentions(mentions); }}
                 placeholder={
                   mode === "iterate"
-                    ? "描述你希望如何修改当前游戏…"
-                    : "描述你想创造的游戏，或 @ 引用画布节点…"
+                    ? t("Describe how you want to change this game…")
+                    : t("Describe a game or type @ to reference canvas nodes…")
                 }
-                ariaLabel="AI 导演提示词"
+                ariaLabel={t("Director request")}
                 onSubmit={() => void generate()}
               />
               <div className="compose-options">
                 <select
-                  aria-label="创作模式"
+                  aria-label={t("Creation mode")}
                   value={mode}
                   onChange={(e) =>
                     setMode(e.target.value as "generate" | "iterate")
                   }
                 >
-                  <option value="generate">生成游戏</option>
-                  <option value="iterate" disabled={!outputNode?.data.versionId}>
-                    ↻ 迭代目标版本
-                  </option>
+                  <option value="generate">{t("Generate game")}</option>
+                  <option value="iterate" disabled={!outputNode?.data.versionId}>{t("↻ Iterate target version")}</option>
                 </select>
                 <select
-                  aria-label="画面比例"
+                  aria-label={t("Aspect ratio")}
                   value={String(settings.aspectRatio || "16:9")}
                   onChange={(e) =>
                     setSettings((s) => ({ ...s, aspectRatio: e.target.value }))
@@ -3547,8 +3237,8 @@ function Studio({
                   className="send-button"
                   type="submit"
                   disabled={!!activeJob || submitting}
-                  title="发送 · ⌘ Enter"
-                  aria-label="开始生成"
+                  title={t("Send · ⌘ Enter")}
+                  aria-label={t("Start generation")}
                 >
                   {submitting ? (
                     <Loader2 className="spin" size={17} />
@@ -3560,7 +3250,7 @@ function Studio({
             </form>
             <div className="director-settings">
               <select
-                aria-label="游戏类型"
+                aria-label={t("Genre")}
                 value={String(settings.genre || "arcade")}
                 onChange={(e) =>
                   setSettings((s) => ({ ...s, genre: e.target.value }))
@@ -3573,30 +3263,30 @@ function Studio({
                 ))}
               </select>
               <select
-                aria-label="视觉风格"
+                aria-label={t("Visual style")}
                 value={String(settings.visualStyle || "neon")}
                 onChange={(e) =>
                   setSettings((s) => ({ ...s, visualStyle: e.target.value }))
                 }
               >
-                <option value="neon">霓虹未来</option>
-                <option value="pixel">复古像素</option>
-                <option value="minimal">简约几何</option>
-                <option value="cartoon">活泼卡通</option>
-                <option value="illustration">手绘插画</option>
+                <option value="neon">{t("Neon future")}</option>
+                <option value="pixel">{t("Pixel art")}</option>
+                <option value="minimal">{t("Minimal geometry")}</option>
+                <option value="cartoon">{t("Cartoon")}</option>
+                <option value="illustration">{t("Hand-drawn")}</option>
               </select>
               <select
-                aria-label="游戏难度"
+                aria-label={t("Difficulty")}
                 value={String(settings.difficulty || "normal")}
                 onChange={(e) =>
                   setSettings((s) => ({ ...s, difficulty: e.target.value }))
                 }
               >
-                <option value="easy">轻松难度</option>
-                <option value="normal">标准难度</option>
-                <option value="hard">挑战难度</option>
+                <option value="easy">{t("Easy")}</option>
+                <option value="normal">{t("Normal")}</option>
+                <option value="hard">{t("Hard")}</option>
               </select>
-              <label title="生成游戏音效">
+              <label title={t("Generate sound effects")}>
                 <input
                   type="checkbox"
                   checked={settings.sound !== false}
@@ -3608,9 +3298,7 @@ function Studio({
               </label>
             </div>
             <div className="director-footnote">
-              <span className="connection-dot online" />
-              本地 Codex CLI · ⌘ / Ctrl + Enter 发送
-            </div>
+              <span className="connection-dot online" />{t("Generation service · ⌘ / Ctrl + Enter to send")}</div>
           </aside>
         )}
       </div>
@@ -3618,12 +3306,10 @@ function Studio({
         <div className="versions-panel">
           <header>
             <h3>
-              <HistoryIcon size={17} />
-              游戏版本
-            </h3>
+              <HistoryIcon size={17} />{t("Game versions")}</h3>
             <IconButton
               icon={X}
-              label="关闭版本面板"
+              label={t("Close versions")}
               onClick={() => setVersionsOpen(false)}
             />
           </header>
@@ -3639,34 +3325,32 @@ function Studio({
                 >
                   <div>
                     <strong>
-                      {v.title || `版本 ${project.versions.length - i}`}
+                      {v.title || t("Version {0}", {"0": project.versions.length - i})}
                     </strong>
                     {v.id === project.activeVersionId && (
-                      <span className="tiny-badge">当前</span>
+                      <span className="tiny-badge">{t("Current")}</span>
                     )}
                   </div>
-                  <p>{v.summary || v.prompt || "游戏版本"}</p>
+                  <p>{v.summary || v.prompt || t("Game versions")}</p>
                   <span>
                     {time(v.createdAt)} ·{" "}
                     {v.source === "manual"
-                      ? "手动编辑"
+                      ? t("Manual edit")
                       : v.source === "demo"
-                        ? "示例作品"
+                        ? t("Example")
                         : "Codex"}
                   </span>
                   <div className="version-actions">
                     <button onClick={() => onPreview(v)}>
-                      <Play size={12} />
-                      试玩
-                    </button>
+                      <Play size={12} />{t("Play")}</button>
                     <button
                       disabled={v.id === project.activeVersionId}
                       onClick={() => void activate(v)}
                     >
                       <RotateCcw size={12} />
                       {v.id === project.activeVersionId
-                        ? "正在使用"
-                        : "切换到此版本"}
+                        ? t("Active")
+                        : t("Switch to this version")}
                     </button>
                   </div>
                 </div>
@@ -3675,18 +3359,21 @@ function Studio({
           ) : (
             <Empty
               icon={HistoryIcon}
-              title="还没有游戏版本"
-              description="每次生成与迭代都会自动保留版本。"
+              title={t("No game versions yet")}
+              description={t("Each generation and iteration keeps a separate version.")}
             />
           )}
         </div>
       )}
+      {detailNodeId && nodes.some(node => node.id === detailNodeId) && <NodeContext.Provider value={{
+        edit: editNode, remove: removeNode, preview: previewNode, useReference,
+        genre: String(settings.genre || 'arcade'), projectId: project.id, nodes, edges, assets: project.assets,
+        bindAssets: id => { setDetailNodeId(undefined); setAssetTarget(id); setAssetsOpen(true); },
+        uploadAssets: id => { uploadTarget.current = id; fileInput.current?.click(); }, openDetails: setDetailNodeId,
+      }}><MaterialDetails node={nodes.find(node => node.id === detailNodeId)!} onClose={() => setDetailNodeId(undefined)}/></NodeContext.Provider>}
       {exportOpen && activeVersion && (
-        <Modal title="导出游戏" onClose={() => setExportOpen(false)}>
-          <p className="muted">
-            导出当前版本“{activeVersion.title || project.name}
-            ”，独立运行或分享给朋友。
-          </p>
+        <Modal title={t("Export game")} onClose={() => setExportOpen(false)}>
+          <p className="muted">{t("Export the current version “")}{activeVersion.title || project.name}{t("” to play independently or share.")}</p>
           <div className="export-options">
             <a
               href={`/api/projects/${project.id}/export?format=html&versionId=${activeVersion.id}`}
@@ -3694,8 +3381,8 @@ function Studio({
               onClick={() => setExportOpen(false)}
             >
               <Code2 size={25} />
-              <strong>HTML 文件</strong>
-              <span>单个页面，用浏览器即可打开</span>
+              <strong>{t("HTML file")}</strong>
+              <span>{t("One page, ready to open in a browser")}</span>
               <Download size={17} />
             </a>
             <a
@@ -3704,24 +3391,22 @@ function Studio({
               onClick={() => setExportOpen(false)}
             >
               <Box size={25} />
-              <strong>完整 ZIP 包</strong>
-              <span>游戏文件 + 使用的项目素材</span>
+              <strong>{t("Complete ZIP")}</strong>
+              <span>{t("Game files + referenced assets")}</span>
               <Download size={17} />
             </a>
           </div>
         </Modal>
       )}
       {codeOpen && (
-        <Modal title="游戏代码编辑器" wide onClose={() => setCodeOpen(false)}>
+        <Modal title={t("Game code editor")} wide onClose={() => setCodeOpen(false)}>
           <div className="code-toolbar">
-            <label>
-              版本名称
-              <input
+            <label>{t("Version name")}<input
                 value={codeTitle}
                 onChange={(e) => setCodeTitle(e.target.value)}
               />
             </label>
-            <span>保存会创建新版本，保留原作品</span>
+            <span>{t("Saving creates a new version and preserves earlier work")}</span>
           </div>
           {codeLoading ? (
             <div className="loading-page">
@@ -3733,13 +3418,11 @@ function Studio({
               spellCheck={false}
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              aria-label="游戏 HTML 源码"
+              aria-label={t("Game HTML source")}
             />
           )}
           <div className="modal-actions">
-            <button className="button" onClick={() => setCodeOpen(false)}>
-              取消
-            </button>
+            <button className="button" onClick={() => setCodeOpen(false)}>{t("Cancel")}</button>
             <button
               className="button primary"
               disabled={codeSaving || codeLoading || !code.trim()}
@@ -3749,9 +3432,7 @@ function Studio({
                 <Loader2 className="spin" size={15} />
               ) : (
                 <Save size={15} />
-              )}
-              保存为新版本
-            </button>
+              )}{t("Save as new version")}</button>
           </div>
         </Modal>
       )}
@@ -3790,12 +3471,11 @@ function PreviewModal({
     <Modal title={current?.title || project.name} wide onClose={onClose}>
       <div className="preview-toolbar">
         <div className="preview-label">
-          <span className="connection-dot online" />
-          交互试玩 <span>HTML5</span>
+          <span className="connection-dot online" />{t("Interactive preview")}{' '}<span>HTML5</span>
         </div>
         <div>
           <select
-            aria-label="试玩版本"
+            aria-label={t("Preview version")}
             value={versionId}
             onChange={(e) => {
               setVersionId(e.target.value);
@@ -3804,18 +3484,18 @@ function PreviewModal({
           >
             {project.versions.map((v, i) => (
               <option value={v.id} key={v.id}>
-                {v.title || `版本 ${i + 1}`}
+                {v.title || t("Version {0}", {"0": i + 1})}
               </option>
             ))}
           </select>
           <IconButton
             icon={RefreshCw}
-            label="重新开始游戏"
+            label={t("Restart game")}
             onClick={() => setRestart((v) => v + 1)}
           />
           <IconButton
             icon={full ? Minimize2 : Maximize2}
-            label="全屏游戏"
+            label={t("Fullscreen game")}
             onClick={fullscreen}
           />
         </div>
@@ -3828,33 +3508,31 @@ function PreviewModal({
               current.previewUrl ||
               `/api/projects/${project.id}/versions/${versionId}/html`
             }
-            title={`${project.name} 可玩游戏`}
+            title={t("{0} playable game", {"0": project.name})}
             sandbox="allow-scripts allow-pointer-lock"
             allow="fullscreen; autoplay; gamepad"
           />
         ) : (
           <Empty
             icon={GameCanvasIcon}
-            title="游戏还没有生成"
-            description="在 AI 导演中开始创作，完成后即可试玩。"
+            title={t("Game not generated yet")}
+            description={t("Start creating in the director, then play the result here.")}
           />
         )}
       </div>
       <div className="preview-footer">
         <span>
           <Keyboard size={14} />
-          {current?.controls || "点击游戏区域后开始游玩 · 游戏内有操作说明"}
+          {current?.controls || t("Click inside the game to play · Controls are shown in the game")}
         </span>
         <div className="preview-actions">
           {onCustomize && (
             <button
               className="button small primary"
-              title="创建独立副本，保留原示例"
+              title={t("Create an independent copy and preserve the example")}
               onClick={() => void onCustomize()}
             >
-              <Copy size={14} />
-              以此创作
-            </button>
+              <Copy size={14} />{t("Customize this game")}</button>
           )}
           {current && (
             <a
@@ -3862,9 +3540,7 @@ function PreviewModal({
               href={`/api/projects/${project.id}/export?format=zip&versionId=${current.id}`}
               download
             >
-              <Download size={14} />
-              导出游戏
-            </a>
+              <Download size={14} />{t("Export game")}</a>
           )}
         </div>
       </div>

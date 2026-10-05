@@ -1,3 +1,4 @@
+import { getLanguage, t } from "./locale";
 import type { Node, Edge, Viewport } from "@xyflow/react";
 
 export type GameNode = Node<{
@@ -75,6 +76,11 @@ export type Template = {
   previewUrl?: string;
   tags?: string[];
   settings?: Record<string, unknown>;
+  materials?: Record<string, { title: string; content: string; specifications: Record<string, string> }>;
+  output?: { title: string; content: string };
+  steps?: string[];
+  estimatedMinutes?: number;
+  locales?: Record<string, { name: string; description: string; prompt: string; materials?: Template['materials']; output?: Template['output']; steps?: string[] }>;
 };
 export type Job = {
   id: string;
@@ -110,25 +116,43 @@ export type Bootstrap = {
   jobs?: Job[];
 };
 
+let csrfToken: string | null = null;
+export const setCsrfToken = (token: string | null) => { csrfToken = token; };
+export class RequestError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string) { super(message); this.name = "RequestError"; }
+}
+const requestErrors: Record<string, string> = {
+  INVALID_INPUT: "Please check your input.", AUTH_REQUIRED: "Please sign in to continue.",
+  INVALID_REFERENCE: "A referenced material is missing or no longer valid. Update the references and retry.",
+  PROJECT_NOT_FOUND: "The requested item could not be found.", VERSION_NOT_FOUND: "The requested item could not be found.",
+  INVALID_ASSET_TYPE: "Supported files: PNG, JPEG, WebP, GIF, AVIF, audio, JSON and plain text.",
+  INVALID_ASSET: "The uploaded file is invalid or too large.", INVALID_ASSET_CONTENT: "The uploaded file is invalid or too large.",
+};
 export async function request<T>(
   url: string,
   options: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(options.headers);
+  if (!headers.has("Accept-Language")) headers.set("Accept-Language", getLanguage() === "zh" ? "zh-CN" : "en");
+  if (csrfToken && !["GET", "HEAD", "OPTIONS"].includes((options.method || "GET").toUpperCase())) headers.set("X-CSRF-Token", csrfToken);
   if (options.body && !(options.body instanceof FormData))
     headers.set("Content-Type", "application/json");
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetch(url, { credentials: "same-origin", ...options, headers });
   if (!response.ok) {
-    let error = `请求失败 (${response.status})`;
+    let error = t("Request failed ({status})", {status: response.status}), code = "REQUEST_FAILED";
     try {
       const data = await response.json();
+      code = typeof data.error === "string" ? data.error : data.error?.code || data.code || "REQUEST_FAILED";
       error =
         data.error?.message ||
         data.message ||
         (typeof data.error === "string" ? data.error : undefined) ||
         error;
     } catch {}
-    throw new Error(error);
+    if (/\p{Script=Han}/u.test(error)) error = t(requestErrors[code] || "This action is temporarily unavailable. Please retry.");
+    else error = t(error);
+    if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("gamestudio:session-expired"));
+    throw new RequestError(error, response.status, code);
   }
   if (response.status === 204) return undefined as T;
   return response.json();

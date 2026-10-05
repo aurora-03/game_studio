@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { TEMPLATES } from '../../server/content.js';
 import { Store, newId, now } from '../../server/store.js';
 
 const html = '<!doctype html><html><head><title>Playable game</title></head><body><canvas></canvas><script>let score = 0; function play(){score++;}</script></body></html>';
@@ -100,7 +101,7 @@ test('new templates provide a complete semantic workflow while existing user gra
   const game = project.nodes.find((node) => node.type === 'game');
   assert.equal(project.edges.length, 5); assert.ok(project.edges.every((edge) => edge.target === game.id));
   for (const node of project.nodes.filter((node) => ['character', 'scene', 'prop', 'audio'].includes(node.type))) {
-    assert.equal(node.data.content, ''); assert.deepEqual(node.data.assetIds, []); assert.equal(Object.keys(node.data.specifications).length, 3);
+    assert.equal(node.data.content, TEMPLATES.find(t => t.id === 'forest-jump').materials[node.type].content); assert.deepEqual(node.data.assetIds, []); assert.equal(Object.keys(node.data.specifications).length, 3);
   }
   const legacy = store.createProject({ name: 'Legacy graph', nodes: [{ id: newId(), type: 'text', position: { x: 24, y: 12 }, data: { content: 'Do not replace my user design' } }] });
   store.persist(); const restored = new Store(dir, { seed: false });
